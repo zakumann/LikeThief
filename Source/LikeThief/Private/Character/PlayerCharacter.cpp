@@ -12,6 +12,7 @@
 #include "Curves/CurveFloat.h"
 #include "DrawDebugHelpers.h"
 #include "Kismet/KismetSystemLibrary.h"
+#include "TimerManager.h"
 
 // Sets default values
 APlayerCharacter::APlayerCharacter()
@@ -85,6 +86,19 @@ void APlayerCharacter::BeginPlay()
 		LeanRightTimeline.AddInterpFloat(LeanCurve, LeanRightProgressUpdate);
 		LeanRightTimeline.SetTimelineFinishedFunc(LeanRightFinishedEvent);
 	}
+
+	// Setup Mantle Timeline(T_Mantle)
+	if (MantleCurve)
+	{
+		FOnTimelineFloat MantleProgressUpdate;
+		MantleProgressUpdate.BindUFunction(this, FName("MantleUpdate"));
+
+		FOnTimelineEvent MantleFinishedEvent;
+		MantleFinishedEvent.BindUFunction(this, FName("MantleFinished"));
+
+		MantleTimeline.AddInterpFloat(MantleCurve, MantleProgressUpdate);
+		MantleTimeline.SetTimelineFinishedFunc(MantleFinishedEvent);
+	}
 }
 
 // Called every frame
@@ -95,6 +109,7 @@ void APlayerCharacter::Tick(float DeltaTime)
 	CrouchingTimeline.TickTimeline(DeltaTime);
 	LeanLeftTimeline.TickTimeline(DeltaTime);
 	LeanRightTimeline.TickTimeline(DeltaTime);
+	MantleTimeline.TickTimeline(DeltaTime);
 }
 
 // Called to bind functionality to input
@@ -107,7 +122,7 @@ void APlayerCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCom
 		EnhancedInput->BindAction(MoveAction, ETriggerEvent::Triggered, this, &APlayerCharacter::Move);
 		EnhancedInput->BindAction(LookAction, ETriggerEvent::Triggered, this, &APlayerCharacter::Look);
 		EnhancedInput->BindAction(JumpAction, ETriggerEvent::Started, this, &APlayerCharacter::Jump);
-
+		EnhancedInput->BindAction(JumpAction, ETriggerEvent::Completed, this, &APlayerCharacter::StopJump);
 		// Crouch
 		EnhancedInput->BindAction(CrouchAction, ETriggerEvent::Started, this, &APlayerCharacter::ToggleCrouch);
 
@@ -152,8 +167,142 @@ void APlayerCharacter::Look(const FInputActionValue& InputValue)
 
 void APlayerCharacter::Jump()
 {
-	ACharacter::Jump();
+	// IsFalling?
+	if (!CharacterMovement->IsFalling())
+	{
+		// False: jump
+		ACharacter::Jump();
+	}
+	else
+	{
+		//True: bHold is true
+		bHold = true;
+
+		// bHold && IsFalling?
+		CheckMantleCondition();
+	}
 }
+
+void APlayerCharacter::StopJump()
+{
+	bHold = false;
+	ACharacter::StopJumping();
+}
+
+void APlayerCharacter::CheckMantleCondition()
+{
+	//if bHoldis true and IsFalling also true
+	if (bHold && CharacterMovement->IsFalling())
+	{
+		if (bHitDetected)
+		{
+			MantleUp();
+		}
+		else
+		{
+			MantleCheck();
+
+			// After Delay 0.001, back to CheckMantleCondition
+			GetWorld()->GetTimerManager().SetTimer(
+				MantleCheckTimerHandle,
+				this,
+				&APlayerCharacter::CheckMantleCondition,
+				MantleCheckDelay,
+				false
+			);
+		}
+	}
+}
+void APlayerCharacter::MantleCheck()
+{
+	// Line Trace through Camera location
+	FVector CameraLocation = Camera->GetComponentLocation();
+	FVector CameraForward = Camera->GetForwardVector();
+	FVector TraceStart = CameraLocation;
+	FVector TraceEnd = CameraLocation + (CameraForward * 50.0f);
+
+	FHitResult LineHitResult;
+	FCollisionQueryParams QueryParams;
+	QueryParams.AddIgnoredActor(this);
+
+	bool bLineHit = GetWorld()->LineTraceSingleByChannel(
+		LineHitResult,
+		TraceStart,
+		TraceEnd,
+		ECC_Visibility,
+		QueryParams
+	);
+
+	// Deebug Line Trace
+	DrawDebugLine(GetWorld(), TraceStart, TraceEnd, bLineHit ? FColor::Green : FColor::Red, false, 0.1f);
+
+	if (bLineHit)
+	{
+		// Ready Sphere Trace
+		FVector LineHitLocation = LineHitResult.Location;
+		FVector ForwardOffset = CameraForward * MantleForwardDistance;
+		FVector SphereStart = LineHitLocation + ForwardOffset;
+		SphereStart.Z += 100.0f;
+
+		FVector SphereEnd = SphereStart;
+		SphereEnd.Z += 96.0f;
+
+		FHitResult SphereHitResult;
+		bool bSphereHit = GetWorld()->SweepSingleByChannel(
+			SphereHitResult,
+			SphereStart,
+			SphereEnd,
+			FQuat::Identity,
+			ECC_Visibility,
+			FCollisionShape::MakeSphere(MantleSphereRadius),
+			QueryParams
+		);
+
+		// Debug Sphere Trace
+		DrawDebugSphere(GetWorld(), SphereStart, MantleSphereRadius, 12, FColor::Yellow, false, 0.1f);
+		DrawDebugSphere(GetWorld(), SphereEnd, MantleSphereRadius, 12, bSphereHit ? FColor::Red : FColor::Green, false, 0.1f);
+		DrawDebugLine(GetWorld(), SphereStart, SphereEnd, bSphereHit ? FColor::Red : FColor::Green, false, 0.1f);
+
+		if (bSphereHit)
+		{
+			// if there is collision mantle is deactivate
+			bHitDetected = false;
+		}
+		else
+		{
+			// Without any collision mantle is activate
+			bHitDetected = true;
+			MantleTargetLocation = LineHitLocation + ForwardOffset;
+			MantleTargetLocation.Z += 100.0f;
+		}
+	}
+	else
+	{
+		bHitDetected = false;
+	}
+}
+void APlayerCharacter::MantleUp()
+{ 
+	// Set HitDetected is false
+	bHitDetected = false;
+
+	// Timeline play from start
+	MantleTimeline.PlayFromStart();
+}
+
+void APlayerCharacter::MantleUpdate(float Alpha)
+{
+	// Lerp Actor Location
+	FVector CurrentLocation = GetActorLocation();
+	FVector NewLocation = FMath::Lerp(CurrentLocation, MantleTargetLocation, Alpha);
+
+	SetActorLocation(NewLocation);
+}
+
+void APlayerCharacter::MantleFinished()
+{
+}
+
 
 void APlayerCharacter::CrouchUpdate(float Alpha)
 {

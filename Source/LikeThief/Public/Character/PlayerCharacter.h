@@ -107,6 +107,18 @@ public:
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Lean")
 	FTransform LeanRightTransform = FTransform(FRotator(0.0f, 0.0f, 20.0f), FVector(0.0f, 15.0f, 0.0f), FVector(1.0f, 1.0f, 1.0f));
 
+	// ---Mantle---
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Mantle")
+	UCurveFloat* MantleCurve = nullptr;
+
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Mantle")
+	float MantleCheckDelay = 0.001f;
+
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Mantle")
+	float MantleForwardDistance = 17.0f;
+
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Mantle")
+	float MantleSphereRadius = 34.0f;
 protected:
 	// Handles Movement Input
 	void Move(const FInputActionValue& InputValue);
@@ -115,6 +127,7 @@ protected:
 	void Look(const FInputActionValue& InputValue);
 
 	void Jump();
+	void StopJump();
 
 	// --- Crouch---
 public:
@@ -159,4 +172,22 @@ public:
 
 	void StartLeanRight();
 	void StopLeanRight();
+
+	// --- Mantle ---
+	FTimeline MantleTimeline;
+
+	bool bHold = false;
+	bool bHitDetected = false;
+	FVector MantleTargetLocation = FVector::ZeroVector;
+	FTimerHandle MantleCheckTimerHandle;
+
+	UFUNCTION()
+	void MantleUpdate(float Alpha);
+
+	UFUNCTION()
+	void MantleFinished();
+
+	void CheckMantleCondition();
+	void MantleCheck();
+	void MantleUp();
 };
