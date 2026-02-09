@@ -110,6 +110,14 @@ void APlayerCharacter::Tick(float DeltaTime)
 	LeanLeftTimeline.TickTimeline(DeltaTime);
 	LeanRightTimeline.TickTimeline(DeltaTime);
 	MantleTimeline.TickTimeline(DeltaTime);
+
+	if (bIsMantling)
+	{
+		if (CheckMantleOverhead())
+		{
+			CancelMantle();
+		}
+	}
 }
 
 // Called to bind functionality to input
@@ -215,30 +223,43 @@ void APlayerCharacter::CheckMantleCondition()
 }
 void APlayerCharacter::MantleCheck()
 {
-	// Line Trace through Camera location
+	// Step 1 : Camera Location Line Trace (Check WorldStatic)
 	FVector CameraLocation = Camera->GetComponentLocation();
-	FVector CameraForward = Camera->GetForwardVector();
-	FVector TraceStart = CameraLocation;
-	FVector TraceEnd = CameraLocation + (CameraForward * 50.0f);
+	FVector UpTraceStart = CameraLocation;
+	FVector UpTraceEnd = CameraLocation + FVector(0.0f, 0.0f, MantleOverheadCheckHeight);
 
-	FHitResult LineHitResult;
+	FHitResult UpHitResult;
 	FCollisionQueryParams QueryParams;
 	QueryParams.AddIgnoredActor(this);
 
+	bool bUpHit = GetWorld()->LineTraceSingleByChannel(
+		UpHitResult,
+		UpTraceStart,
+		UpTraceEnd,
+		ECC_WorldStatic,
+		QueryParams
+	);
+
+	// Step 2: No Crash upward, front Line Trace
+	FVector CameraForward = Camera->GetForwardVector();
+	FVector ForwardTraceStart = CameraLocation;
+	FVector ForwardTraceEnd = CameraLocation + (CameraForward * 50.0f);
+
+	FHitResult LineHitResult;
 	bool bLineHit = GetWorld()->LineTraceSingleByChannel(
 		LineHitResult,
-		TraceStart,
-		TraceEnd,
+		ForwardTraceStart,
+		ForwardTraceEnd,
 		ECC_Visibility,
 		QueryParams
 	);
 
-	// Deebug Line Trace
-	DrawDebugLine(GetWorld(), TraceStart, TraceEnd, bLineHit ? FColor::Green : FColor::Red, false, 0.1f);
+	// Debug Forward Line Trace
+	DrawDebugLine(GetWorld(), ForwardTraceStart, ForwardTraceEnd, bLineHit ? FColor::Green : FColor::Red, false, 0.1f);
 
 	if (bLineHit)
 	{
-		// Ready Sphere Trace
+		// Step 3: Ready Sphere Trace
 		FVector LineHitLocation = LineHitResult.Location;
 		FVector ForwardOffset = CameraForward * MantleForwardDistance;
 		FVector SphereStart = LineHitLocation + ForwardOffset;
@@ -265,12 +286,12 @@ void APlayerCharacter::MantleCheck()
 
 		if (bSphereHit)
 		{
-			// if there is collision mantle is deactivate
+			// Branch True: If crash, Mantle is impossible
 			bHitDetected = false;
 		}
 		else
 		{
-			// Without any collision mantle is activate
+			// Branch False: If no crash, Can Mantle
 			bHitDetected = true;
 			MantleTargetLocation = LineHitLocation + ForwardOffset;
 			MantleTargetLocation.Z += 100.0f;
@@ -281,10 +302,41 @@ void APlayerCharacter::MantleCheck()
 		bHitDetected = false;
 	}
 }
+
+bool APlayerCharacter::CheckMantleOverhead()
+{
+	FVector ActorLocation = GetActorLocation();
+	FVector TraceStart = ActorLocation;
+	FVector TraceEnd = ActorLocation + FVector(0.0f, 0.0f, MantleOverheadCheckHeight);
+
+	FHitResult HitResult;
+	FCollisionQueryParams QueryParams;
+	QueryParams.AddIgnoredActor(this);
+
+	bool bHit = GetWorld()->SweepSingleByChannel(
+		HitResult,
+		TraceStart,
+		TraceEnd,
+		FQuat::Identity,
+		ECC_WorldStatic,
+		FCollisionShape::MakeSphere(MantleOverheadCheckRadius),
+		QueryParams
+	);
+
+	// Debug visualization
+	DrawDebugSphere(GetWorld(), TraceStart, MantleOverheadCheckRadius, 12, FColor::Cyan, false, 0.1f);
+	DrawDebugSphere(GetWorld(), TraceEnd, MantleOverheadCheckRadius, 12, bHit ? FColor::Red : FColor::Green, false, 0.1f);
+	DrawDebugLine(GetWorld(), TraceStart, TraceEnd, bHit ? FColor::Red : FColor::Green, false, 0.1f);
+
+	return bHit;
+}
+
 void APlayerCharacter::MantleUp()
 { 
 	// Set HitDetected is false
 	bHitDetected = false;
+
+	bIsMantling = true;
 
 	// Timeline play from start
 	MantleTimeline.PlayFromStart();
@@ -301,8 +353,24 @@ void APlayerCharacter::MantleUpdate(float Alpha)
 
 void APlayerCharacter::MantleFinished()
 {
+	bIsMantling = false;
 }
 
+void APlayerCharacter::CancelMantle()
+{
+	// Cancel Mantle
+	bIsMantling = false;
+	bHitDetected = false;
+	bHold = false;
+
+	// Stop Timeline
+	MantleTimeline.Stop();
+
+	//Clear Timer
+	GetWorld()->GetTimerManager().ClearTimer(MantleCheckTimerHandle);
+
+	UE_LOG(LogTemp, Warning, TEXT("Mantle Cancelled: WorldStatic detected overhead"));
+}
 
 void APlayerCharacter::CrouchUpdate(float Alpha)
 {

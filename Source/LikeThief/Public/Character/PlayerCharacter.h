@@ -67,7 +67,7 @@ public:
 	virtual void SetupPlayerInputComponent(class UInputComponent* PlayerInputComponent) override;
 
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Move")
-	float DefaultMovementSpeed = 600.0f;
+	float DefaultMovementSpeed = 500.0f;
 
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Move")
 	float CrouchMovementSpeed = 300.0f;
@@ -119,6 +119,12 @@ public:
 
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Mantle")
 	float MantleSphereRadius = 34.0f;
+
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Mantle")
+	float MantleOverheadCheckRadius = 17.0f;
+
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Mantle")
+	float MantleOverheadCheckHeight = 100.0f;
 protected:
 	// Handles Movement Input
 	void Move(const FInputActionValue& InputValue);
@@ -178,6 +184,7 @@ public:
 
 	bool bHold = false;
 	bool bHitDetected = false;
+	bool bIsMantling = false;
 	FVector MantleTargetLocation = FVector::ZeroVector;
 	FTimerHandle MantleCheckTimerHandle;
 
@@ -190,4 +197,6 @@ public:
 	void CheckMantleCondition();
 	void MantleCheck();
 	void MantleUp();
+	bool CheckMantleOverhead();
+	void CancelMantle();
 };
