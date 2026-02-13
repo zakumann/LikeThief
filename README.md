@@ -5,3 +5,6 @@ Thank you.
 
 [First Person Realistic Leaning Tutorial from Eremental Studios](https://www.youtube.com/@EREMENTALSTUDIOS)
 [Source](https://www.youtube.com/watch?v=9stXjuPYOwc) - Lean System
+
+[UE4-Light-Detector from MatthewZelriche](https://github.com/MatthewZelriche)
+[Source](https://github.com/MatthewZelriche/UE4-Light-Detector) - Stealth System
