@@ -7,4 +7,5 @@ AEnemyGuard::AEnemyGuard()
 {
 	PatrolPathBehavior = EPatrolPathEnding::Loop;
 	CurrentPathIndex = 0;
+	PathDirection = 1;
 }

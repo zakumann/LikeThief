@@ -11,8 +11,9 @@ APathPoint::APathPoint()
 
 	// Create Sphere Collision
 	SphereCollision = CreateDefaultSubobject<USphereComponent>(TEXT("SphereCollision"));
-	SphereCollision->SetSphereRadius(50.0f);
-	RootComponent = SphereCollision;
+	SphereCollision->SetupAttachment(RootComponent);
+	SphereCollision->SetSphereRadius(64.0f);
+	SphereCollision->SetRelativeLocation(FVector(0.f, 0.f, 40.f));
 
 	// Create Arrow Component
 	Arrow = CreateDefaultSubobject<UArrowComponent>(TEXT("Arrow"));

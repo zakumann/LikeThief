@@ -31,4 +31,8 @@ public:
 	
 	UPROPERTY(BlueprintReadWrite, Category = "Patrol")
 	int32 CurrentPathIndex = 0;
+
+	//PathDirection
+	UPROPERTY(BlueprintReadWrite, Category = "Patrol")
+	int32 PathDirection = 1;
 };
