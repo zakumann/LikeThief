@@ -6,10 +6,12 @@
 #include "AIController.h"
 #include "NavigationSystem.h"
 #include "BehaviorTree/BlackboardComponent.h"
+#include "GameFramework/CharacterMovementComponent.h"
 
 UBTTask_FindPathPoint::UBTTask_FindPathPoint()
 {
 	NodeName = "Find Path Point";
+	WalkSpeed = 600.0f;
 }
 
 EBTNodeResult::Type UBTTask_FindPathPoint::ExecuteTask(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory)
@@ -89,6 +91,13 @@ EBTNodeResult::Type UBTTask_FindPathPoint::ExecuteTask(UBehaviorTreeComponent& O
 
 	// Set Blackboard Value as Float
 	BlackboardComp->SetValueAsFloat(BB_WaitTime.SelectedKeyName, RandomWaitTime);
+
+	// Set Walk Speed
+	UCharacterMovementComponent* CharacterMovement = EnemyGuardPawn->GetCharacterMovement();
+	if (CharacterMovement)
+	{
+		CharacterMovement->MaxWalkSpeed = WalkSpeed;
+	}
 
 	// Finish Execute
 	return EBTNodeResult::Succeeded;

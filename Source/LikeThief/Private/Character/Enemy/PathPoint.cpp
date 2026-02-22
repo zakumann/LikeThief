@@ -17,7 +17,7 @@ APathPoint::APathPoint()
 
 	// Create Arrow Component
 	Arrow = CreateDefaultSubobject<UArrowComponent>(TEXT("Arrow"));
-	Arrow->SetupAttachment(RootComponent);
+	Arrow->SetupAttachment(SphereCollision);
 	Arrow->SetRelativeRotation(FRotator(0.0f, 0.0f, 0.0f));
 }
 
