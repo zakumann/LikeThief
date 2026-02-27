@@ -2,14 +2,17 @@
 
 
 #include "Character/Enemy/BTTask_FindRandomPoint.h"
+#include "Character/Enemy/EnemyBase.h"
 #include "AIController.h"
 #include "NavigationSystem.h"
 #include "BehaviorTree/BlackboardComponent.h"
+#include "GameFramework/CharacterMovementComponent.h"
 
 UBTTask_FindRandomPoint::UBTTask_FindRandomPoint()
 {
 	NodeName = "Find Random Point";
-	Radius = 1000.0f;
+	WalkSpeed = 200.0f;
+	SearchRadiusMax = 1000.0f;
 }
 
 EBTNodeResult::Type UBTTask_FindRandomPoint::ExecuteTask(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory)
@@ -28,6 +31,23 @@ EBTNodeResult::Type UBTTask_FindRandomPoint::ExecuteTask(UBehaviorTreeComponent&
 		return EBTNodeResult::Failed;
 	}
 
+	// Cast To EnemyBase
+	AEnemyBase* EnemyBase = Cast<AEnemyBase>(ControlledPawn);
+	if (!EnemyBase)
+	{
+		return EBTNodeResult::Failed;
+	}
+
+	// Get Character Movement
+	UCharacterMovementComponent* CharacterMovement = EnemyBase->GetCharacterMovement();
+	if (!CharacterMovement)
+	{
+		return EBTNodeResult::Failed;
+	}
+
+	// Set Max Walk Speed
+	CharacterMovement->MaxWalkSpeed = WalkSpeed;
+
 	// Get Actor Location
 	FVector ActorLocation = ControlledPawn->GetActorLocation();
 
@@ -40,7 +60,7 @@ EBTNodeResult::Type UBTTask_FindRandomPoint::ExecuteTask(UBehaviorTreeComponent&
 
 	// Get Random Reachable Point in Radius
 	FNavLocation RandomLocation;
-	bool bSuccess = NavSys->GetRandomReachablePointInRadius(ActorLocation, Radius, RandomLocation);
+	bool bSuccess = NavSys->GetRandomReachablePointInRadius(ActorLocation, SearchRadiusMax, RandomLocation);
 
 	if (!bSuccess)
 	{

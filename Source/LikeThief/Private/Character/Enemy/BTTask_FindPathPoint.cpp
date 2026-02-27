@@ -99,6 +99,9 @@ EBTNodeResult::Type UBTTask_FindPathPoint::ExecuteTask(UBehaviorTreeComponent& O
 		CharacterMovement->MaxWalkSpeed = WalkSpeed;
 	}
 
+	// Set Blackboard Value as Bool - Exit Caution State
+	BlackboardComp->SetValueAsBool(BB_CautionState.SelectedKeyName, false);
+
 	// Finish Execute
 	return EBTNodeResult::Succeeded;
 }

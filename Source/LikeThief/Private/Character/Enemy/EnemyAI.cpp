@@ -5,6 +5,9 @@
 #include "BehaviorTree/BlackboardComponent.h"
 #include "Perception/AISense_Sight.h"
 #include "Perception/AISense_Hearing.h"
+#include "GameFramework/Character.h"
+#include "GameFramework/CharacterMovementComponent.h"
+#include "Kismet/GameplayStatics.h"
 
 AEnemyAI::AEnemyAI()
 {
@@ -13,9 +16,9 @@ AEnemyAI::AEnemyAI()
 
 	// Create Sight Config
 	SightConfig = CreateDefaultSubobject<UAISenseConfig_Sight>(TEXT("SightConfig"));
-	SightConfig->SightRadius = 1000.0f;
-	SightConfig->LoseSightRadius = 1800.0f;
-	SightConfig->PeripheralVisionAngleDegrees = 75.0f;
+	SightConfig->SightRadius = 1500.0f;
+	SightConfig->LoseSightRadius = 1700.0f;
+	SightConfig->PeripheralVisionAngleDegrees = 90.0f;
 	SightConfig->DetectionByAffiliation.bDetectEnemies = true;
 	SightConfig->DetectionByAffiliation.bDetectNeutrals = true;
 	SightConfig->DetectionByAffiliation.bDetectFriendlies = true;
@@ -40,7 +43,7 @@ void AEnemyAI::BeginPlay()
 
 void AEnemyAI::OnTargetPerceptionUpdated(AActor* Actor, FAIStimulus Stimulus)
 {
-	// Get Scene Class for Stimulus
+	// Get Sense Class for Stimulus
 	TSubclassOf<UAISense> SenseClass = UAIPerceptionSystem::GetSenseClassForStimulus(GetWorld(), Stimulus);
 
 	// Handle Sense
@@ -54,6 +57,7 @@ void AEnemyAI::HandleSense(AActor* SensedActor, const FAIStimulus& Stimulus)
 		return;
 	}
 
+	// Get Blackboard Component
 	UBlackboardComponent* BlackboardComp = GetBlackboardComponent();
 	if (!BlackboardComp)
 	{
@@ -63,30 +67,67 @@ void AEnemyAI::HandleSense(AActor* SensedActor, const FAIStimulus& Stimulus)
 	// Get Sense Class
 	TSubclassOf<UAISense> SenseClass = UAIPerceptionSystem::GetSenseClassForStimulus(GetWorld(), Stimulus);
 
-	// Switch on Sense Class
+	// Switch on String (Sense Class)
 	if (SenseClass == UAISense_Sight::StaticClass())
 	{
-		// AISense_Sight
+		// === AISense_Sight ===
 
 		// Set Value as Bool - IsInvestigating
 		bool bSuccessfullySensed = Stimulus.WasSuccessfullySensed();
 		BlackboardComp->SetValueAsBool(FName("IsInvestigating"), bSuccessfullySensed);
 
-		// Branch
+		// Branch - Stimulus Successfully Sensed?
 		if (bSuccessfullySensed)
 		{
-			// Set Value as Object - TargetLocationActor
-			BlackboardComp->SetValueAsObject(FName("TargetLocationActor"), SensedActor);
+			// === True Branch ===
+
+			// Get Player Character
+			APawn* PlayerCharacter = UGameplayStatics::GetPlayerCharacter(GetWorld(), 0);
+
+			// Branch - SensedActor == PlayerCharacter?
+			if (SensedActor == PlayerCharacter)
+			{
+				// === True Branch ===
+
+				// Set Value as Object - TargetLocationActor
+				BlackboardComp->SetValueAsObject(FName("TargetLocationActor"), SensedActor);
+
+				// Get Controlled Pawn
+				APawn* ControlledPawn = GetPawn();
+				if (ControlledPawn)
+				{
+					// Cast To Character
+					ACharacter* AsCharacter = Cast<ACharacter>(ControlledPawn);
+					if (AsCharacter)
+					{
+						// Get Character Movement
+						UCharacterMovementComponent* CharacterMovement = AsCharacter->GetCharacterMovement();
+						if (CharacterMovement)
+						{
+							// Set Max Walk Speed = 400
+							CharacterMovement->MaxWalkSpeed = 400.0f;
+						}
+					}
+				}
+			}
+			// False Branch (SensedActor != PlayerCharacter)
+			// → Do nothing
 		}
 		else
 		{
-			// Lost sight - clear target
+			// === False Branch - Lost Sight ===
+
+			// Set Value as Vector - TargetLocationVector
+			FVector StimulusLocation = Stimulus.StimulusLocation;
+			BlackboardComp->SetValueAsVector(FName("TargetLocationVector"), StimulusLocation);
+
+			// Set Value as Object - TargetLocationActor (Clear)
 			BlackboardComp->ClearValue(FName("TargetLocationActor"));
 		}
 	}
 	else if (SenseClass == UAISense_Hearing::StaticClass())
 	{
-		// AISense_Hearing (later)
-		// Current empty
+		// === AISense_Hearing ===
+		// (추후 구현)
 	}
 }

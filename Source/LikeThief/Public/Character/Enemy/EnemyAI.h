@@ -9,6 +9,11 @@
 #include "Perception/AISenseConfig_Hearing.h"
 #include "EnemyAI.generated.h"
 
+class UBehaviorTree;
+class UAIPerceptionComponent;
+class UAISenseConfig_Sight;
+class UAISenseConfig_Hearing;
+
 /**
  * 
  */

@@ -4,27 +4,21 @@
 
 #include "CoreMinimal.h"
 #include "BehaviorTree/BTTaskNode.h"
-#include "BTTask_FindRandomPoint.generated.h"
+#include "BTTask_EnterCautionState.generated.h"
 
 /**
  * 
  */
 UCLASS()
-class LIKETHIEF_API UBTTask_FindRandomPoint : public UBTTaskNode
+class LIKETHIEF_API UBTTask_EnterCautionState : public UBTTaskNode
 {
 	GENERATED_BODY()
-	
+
 public:
-	UBTTask_FindRandomPoint();
+	UBTTask_EnterCautionState();
 
 	virtual EBTNodeResult::Type ExecuteTask(UBehaviorTreeComponent& OwnerComp, uint8* NodeMemory) override;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Blackboard")
-	FBlackboardKeySelector TargetLocation;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Movement")
-	float WalkSpeed = 200.0f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AI")
-	float SearchRadiusMax = 1000.0f;
+	FBlackboardKeySelector BB_CautionKey;
 };
