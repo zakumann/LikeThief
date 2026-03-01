@@ -59,7 +59,8 @@ EBTNodeResult::Type UBTTask_ReachedPathPoint::ExecuteTask(UBehaviorTreeComponent
 		case EPatrolPathEnding::PatrolBack:
 		{
 			// Set Path Direction (multiply by -1)
-			GuardEnemyPawn->PathDirection = GuardEnemyPawn->PathDirection * -1;
+			int32 NewPathDirection = GuardEnemyPawn->PathDirection * -1;
+			GuardEnemyPawn->PathDirection = NewPathDirection;
 
 			// Set CurrentPathIndex to next valid index
 			GuardEnemyPawn->CurrentPathIndex = GuardEnemyPawn->CurrentPathIndex + GuardEnemyPawn->PathDirection;
