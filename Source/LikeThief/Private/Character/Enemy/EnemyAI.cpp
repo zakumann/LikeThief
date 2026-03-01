@@ -23,8 +23,16 @@ AEnemyAI::AEnemyAI()
 	SightConfig->DetectionByAffiliation.bDetectNeutrals = true;
 	SightConfig->DetectionByAffiliation.bDetectFriendlies = true;
 
+	// Create Hearing Config
+	HearingConfig = CreateDefaultSubobject<UAISenseConfig_Hearing>(TEXT("HearingConfig"));
+	HearingConfig->HearingRange = 1500.0f;
+	HearingConfig->DetectionByAffiliation.bDetectEnemies = true;
+	HearingConfig->DetectionByAffiliation.bDetectNeutrals = true;
+	HearingConfig->DetectionByAffiliation.bDetectFriendlies = true;
+
 	// Configure AI Perception
 	AIPerception->ConfigureSense(*SightConfig);
+	AIPerception->ConfigureSense(*HearingConfig);
 	AIPerception->SetDominantSense(SightConfig->GetSenseImplementation());
 
 	// Bind Perception Update Event
@@ -128,6 +136,19 @@ void AEnemyAI::HandleSense(AActor* SensedActor, const FAIStimulus& Stimulus)
 	else if (SenseClass == UAISense_Hearing::StaticClass())
 	{
 		// === AISense_Hearing ===
-		// (추후 구현)
+
+		// Set Value as Bool - IsInvestigating
+		BlackboardComp->SetValueAsBool(FName("Isinvestigating"), true);
+
+		// Set Value as Vector - TargetLocationVector(Noise Location)
+		FVector StimulusLocation = Stimulus.StimulusLocation;
+		BlackboardComp->SetValueAsVector(FName("TargetLocationVector"), StimulusLocation);
+
+		// Debug
+		if (GEngine)
+		{
+			GEngine->AddOnScreenDebugMessage(-1, 2.0f, FColor::Orange,
+				FString::Printf(TEXT("NOISE DETECTED at: %s"), *StimulusLocation.ToString()));
+		}
 	}
 }

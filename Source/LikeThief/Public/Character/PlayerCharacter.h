@@ -6,6 +6,7 @@
 #include "GameFramework/Character.h"
 #include "InputActionValue.h"
 #include "Components/TimelineComponent.h"
+#include "Sound/SoundCue.h"
 #include "PlayerCharacter.generated.h"
 
 class UCmaeraComponent;
@@ -29,6 +30,7 @@ public:
 protected:
 	// Called when the game starts or when spawned
 	virtual void BeginPlay() override;
+	virtual void Landed(const FHitResult& Hit) override;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = Input)
 	class UInputMappingContext* InputMapping;
@@ -188,6 +190,54 @@ public:
 	FVector MantleTargetLocation = FVector::ZeroVector;
 	FTimerHandle MantleCheckTimerHandle;
 
+	// --- Noise ---
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Noise")
+	float MovementNoiseInterval = 0.5f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite,Category = "Noise")
+	float WalkNoiseLoudness = 0.5f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Noise")
+	float RunNoiseLoudness = 1.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Noise")
+	float NoiseRange = 1000.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Noise")
+	float LandingNoiseLoudness = 1.5f;
+
+	// --- Footstep Sound ---
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Sound")
+	USoundCue* FootstepSoundCue;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Sound")
+	USoundCue* LandingSoundCue;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Sound")
+	float FootstepVolumeMultiplier = 1.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Sound")
+	float FootstepPitchMultiplier = 1.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Sound")
+	float LandingVolumeMultiplier = 1.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Sound")
+	float LandingPitchMultiplier = 1.0f;
+
+
+private:
+	float LastNoiseTime = 0.0f;
+	bool bWasInAir = false;
+	float FallStartZ = 0.0f;
+
+	void MakeMovementNoise();
+	bool ShouldMakeNoise() const;
+	float GetCurrentNoiseLoudness() const;
+	void PlayFootstepSound();
+	void PlayLandingSound();
+	void MakeLandingNoise();
+public:
 	UFUNCTION()
 	void MantleUpdate(float Alpha);
 

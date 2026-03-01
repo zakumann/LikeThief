@@ -13,6 +13,10 @@
 #include "DrawDebugHelpers.h"
 #include "Kismet/KismetSystemLibrary.h"
 #include "TimerManager.h"
+#include "Perception/AISense_Hearing.h"
+#include "Sound/SoundCue.h"
+#include "Components/AudioComponent.h"
+#include "Kismet/GameplayStatics.h"
 
 // Sets default values
 APlayerCharacter::APlayerCharacter()
@@ -29,6 +33,16 @@ APlayerCharacter::APlayerCharacter()
 	Camera = CreateDefaultSubobject<UCameraComponent>(TEXT("Camera"));
 	Camera->SetupAttachment(CameraBloom);
 	Camera->bUsePawnControlRotation = false;
+
+	// Sound defaults
+	FootstepVolumeMultiplier = 1.0f;
+	FootstepPitchMultiplier = 1.0f;
+	LandingVolumeMultiplier = 1.0f;
+	LandingPitchMultiplier = 1.0f;
+
+	// Noise defaults
+	LandingNoiseLoudness = 1.5f;
+	bWasInAir = false;
 }
 
 // Called when the game starts or when spawned
@@ -101,6 +115,30 @@ void APlayerCharacter::BeginPlay()
 	}
 }
 
+void APlayerCharacter::Landed(const FHitResult& Hit)
+{
+	Super::Landed(Hit);
+
+	// Don't make landing noise during Mantle
+	if (bIsMantling)
+	{
+		return;
+	}
+
+	// Only make noise if was actually in air (jumped or fell)
+	if (bWasInAir)
+	{
+		// Reset flag
+		bWasInAir = false;
+
+		// Play landing sound
+		PlayLandingSound();
+
+		// Make landing noise for AI
+		MakeLandingNoise();
+	}
+}
+
 // Called every frame
 void APlayerCharacter::Tick(float DeltaTime)
 {
@@ -118,6 +156,16 @@ void APlayerCharacter::Tick(float DeltaTime)
 			CancelMantle();
 		}
 	}
+
+	// Track fall start height
+	if (GetCharacterMovement()->IsFalling() && !bWasInAir)
+	{
+		FallStartZ = GetActorLocation().Z;
+		bWasInAir = true;
+	}
+
+	// Make Movement Noise
+	MakeMovementNoise();
 }
 
 // Called to bind functionality to input
@@ -340,6 +388,168 @@ void APlayerCharacter::MantleUp()
 
 	// Timeline play from start
 	MantleTimeline.PlayFromStart();
+}
+
+void APlayerCharacter::MakeMovementNoise()
+{
+	// Check if should make noise
+	if (!ShouldMakeNoise())
+	{
+		return;
+	}
+
+	// Check time interval
+	float CurrentTime = GetWorld()->GetTimeSeconds();
+	if (CurrentTime - LastNoiseTime < MovementNoiseInterval)
+	{
+		return;
+	}
+
+	// Update last noise time
+	LastNoiseTime = CurrentTime;
+
+	// Get noise loudness
+	float NoiseLoudness = GetCurrentNoiseLoudness();
+
+	// Play Footstep Sound
+	PlayFootstepSound();
+
+	// Report noise event
+	UAISense_Hearing::ReportNoiseEvent(GetWorld(), GetActorLocation(), NoiseLoudness, this, NoiseRange, FName("Footstep"));
+
+	// Debug
+	if (GEngine)
+	{
+		FColor DebugColor = bIsCrouching ? FColor::Green : FColor::Yellow;
+		GEngine->AddOnScreenDebugMessage(-1, 0.5f, DebugColor,
+			FString::Printf(TEXT("Footstep Noise: %.2f"), NoiseLoudness));
+	}
+}
+
+bool APlayerCharacter::ShouldMakeNoise() const
+{
+	// Don't make noise when crouching
+	if (bIsCrouching)
+	{
+		return false;
+	}
+
+	// Don't make noise when mantling
+	if (bIsMantling)
+	{
+		return false;
+	}
+
+	// Don't make noise when not moving
+	FVector Velocity = GetVelocity();
+	Velocity.Z = 0.0f; // Ignore vertical velocity
+	float Speed = Velocity.Size();
+
+	if (Speed < 10.0f) // Minimum speed threshold
+	{
+		return false;
+	}
+
+	// Don't make noise when falling
+	if (GetCharacterMovement()->IsFalling())
+	{
+		return false;
+	}
+
+	return true;
+}
+
+float APlayerCharacter::GetCurrentNoiseLoudness() const
+{
+	// Get horizontal velocity
+	FVector Velocity = GetVelocity();
+	Velocity.Z = 0.0f;
+	float Speed = Velocity.Size();
+
+	// Get max walk speed 
+	float MaxWalkSpeed = GetCharacterMovement()->MaxWalkSpeed;
+
+	// Calculate loudness based on speed
+	float SpeedRatio = FMath::Clamp(Speed / MaxWalkSpeed, 0.0f, 1.0f);
+
+	// Lerp between walk and run loudness
+	float NoiseLoudness = FMath::Lerp(WalkNoiseLoudness, RunNoiseLoudness, SpeedRatio);
+
+	return NoiseLoudness;
+}
+
+void APlayerCharacter::PlayFootstepSound()
+{
+	// Check if FootstepSoundCue is assigned
+	if (!FootstepSoundCue)
+	{
+		return;
+	}
+
+	// Get Current speed for dynamic volume/pitch
+	FVector Velocity = GetVelocity();
+	Velocity.Z = 0.0f;
+	float Speed = Velocity.Size();
+	float MaxWalkSpeed = GetCharacterMovement()->MaxWalkSpeed;
+	float SpeedRatio = FMath::Clamp(Speed / MaxWalkSpeed, 0.0f, 1.0f);
+
+	// Calculate volume and pitch based on speed
+	float Volume = FMath::Lerp(0.5f, 1.0f, SpeedRatio) * FootstepVolumeMultiplier;
+	float Pitch = FMath::Lerp(0.9f, 1.1f, SpeedRatio) * FootstepPitchMultiplier;
+
+	// Play sound at player location
+	UGameplayStatics::PlaySoundAtLocation(GetWorld(), FootstepSoundCue, GetActorLocation(), Volume, Pitch);
+}
+
+void APlayerCharacter::PlayLandingSound()
+{
+	// Use LandingSoundCue if available, otherwise use FootstepSoundCue
+	USoundCue* SoundToPlay = LandingSoundCue ? LandingSoundCue : FootstepSoundCue;
+
+	if (!SoundToPlay)
+	{
+		return;
+	}
+
+	// Dynamic volume and pitch based on fall intensity
+	float Volume = 1.0f * LandingVolumeMultiplier;
+	float Pitch = 1.0f * LandingPitchMultiplier;
+
+	// Play sound at player location
+	UGameplayStatics::PlaySoundAtLocation(
+		GetWorld(),
+		SoundToPlay,
+		GetActorLocation(),
+		Volume,
+		Pitch
+	);
+
+	// Debug
+	if (GEngine)
+	{
+		GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Cyan,
+			TEXT("Landing Sound Played"));
+	}
+}
+
+void APlayerCharacter::MakeLandingNoise()
+{
+	// Report noise event for AI
+	UAISense_Hearing::ReportNoiseEvent(
+		GetWorld(),
+		GetActorLocation(),
+		LandingNoiseLoudness,
+		this,
+		NoiseRange,
+		FName("Landing")
+	);
+
+	// Debug
+	if (GEngine)
+	{
+		GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Red,
+			FString::Printf(TEXT("Landing Noise: %.2f"), LandingNoiseLoudness));
+	}
 }
 
 void APlayerCharacter::MantleUpdate(float Alpha)
