@@ -137,18 +137,36 @@ void AEnemyAI::HandleSense(AActor* SensedActor, const FAIStimulus& Stimulus)
 	{
 		// === AISense_Hearing ===
 
-		// Set Value as Bool - IsInvestigating
-		BlackboardComp->SetValueAsBool(FName("Isinvestigating"), true);
+	// Get current investigation state
+		bool bIsCurrentlyInvestigating = BlackboardComp->GetValueAsBool(FName("IsInvestigating"));
 
-		// Set Value as Vector - TargetLocationVector(Noise Location)
+		// Set Value as Bool - IsInvestigating
+		bool bSuccessfullySensed = Stimulus.WasSuccessfullySensed();
+		BlackboardComp->SetValueAsBool(FName("IsInvestigating"), bSuccessfullySensed);
+
+		// Set Value as Vector - TargetLocationVector
 		FVector StimulusLocation = Stimulus.StimulusLocation;
 		BlackboardComp->SetValueAsVector(FName("TargetLocationVector"), StimulusLocation);
+
+		// Calculate distance to noise
+		APawn* ControlledPawn = GetPawn();
+		float DistanceToNoise = 0.0f;
+		if (ControlledPawn)
+		{
+			DistanceToNoise = FVector::Dist(ControlledPawn->GetActorLocation(), StimulusLocation);
+		}
 
 		// Debug
 		if (GEngine)
 		{
-			GEngine->AddOnScreenDebugMessage(-1, 2.0f, FColor::Orange,
-				FString::Printf(TEXT("NOISE DETECTED at: %s"), *StimulusLocation.ToString()));
+			FColor DebugColor = bIsCurrentlyInvestigating ? FColor::Yellow : FColor::Orange;
+			GEngine->AddOnScreenDebugMessage(-1, 3.0f, DebugColor,
+				FString::Printf(TEXT("NOISE DETECTED! Distance: %.0fcm | Location: (%.0f, %.0f, %.0f)"),
+					DistanceToNoise, StimulusLocation.X, StimulusLocation.Y, StimulusLocation.Z));
 		}
+
+		// Log for debugging
+		UE_LOG(LogTemp, Warning, TEXT("AISense_Hearing: Noise at (%.1f, %.1f, %.1f), Distance: %.1f"),
+			StimulusLocation.X, StimulusLocation.Y, StimulusLocation.Z, DistanceToNoise);
 	}
 }
