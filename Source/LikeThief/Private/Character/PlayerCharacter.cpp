@@ -2,6 +2,11 @@
 
 
 #include "Character/PlayerCharacter.h"
+#include "Character/LightDetector.h"
+#include "Perception/AIPerceptionStimuliSourceComponent.h"
+#include "Perception/AISense_Sight.h"
+#include "Perception/AISense_Hearing.h"
+#include "Perception/AIPerceptionSystem.h"
 #include "InputMappingContext.h"
 #include "EnhancedInputSubsystems.h"
 #include "EnhancedInputComponent.h"
@@ -13,7 +18,6 @@
 #include "DrawDebugHelpers.h"
 #include "Kismet/KismetSystemLibrary.h"
 #include "TimerManager.h"
-#include "Perception/AISense_Hearing.h"
 #include "Sound/SoundCue.h"
 #include "Components/AudioComponent.h"
 #include "Kismet/GameplayStatics.h"
@@ -55,6 +59,27 @@ void APlayerCharacter::BeginPlay()
 		if (UEnhancedInputLocalPlayerSubsystem* Subsystem = ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(PlayerController->GetLocalPlayer()))
 		{
 			Subsystem->AddMappingContext(InputMapping, 0);
+		}
+	}
+
+	// AI perception
+	UAIPerceptionSystem::RegisterPerceptionStimuliSource(this, UAISense_Sight::StaticClass(), this);
+	UAIPerceptionSystem::RegisterPerceptionStimuliSource(this, UAISense_Hearing::StaticClass(), this);
+
+	// Spawn Light Detector
+	if (LightDetectorClass)
+	{
+		FActorSpawnParameters SpawnParams;
+		SpawnParams.Owner = this;
+		SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+
+		LightDetector = GetWorld()->SpawnActor<ALightDetector>(LightDetectorClass, GetActorLocation(), FRotator::ZeroRotator, SpawnParams);
+
+		if (LightDetector)
+		{
+			// Attach to character
+			LightDetector->AttachToActor(this, FAttachmentTransformRules::SnapToTargetIncludingScale);
+			UE_LOG(LogTemp, Log, TEXT("LightDetector spawned and attached"));
 		}
 	}
 
@@ -164,8 +189,79 @@ void APlayerCharacter::Tick(float DeltaTime)
 		bWasInAir = true;
 	}
 
+	// Update Stealth State
+	UpdateStealthState();
+
 	// Make Movement Noise
 	MakeMovementNoise();
+}
+
+void APlayerCharacter::UpdateStealthState()
+{
+	if (!LightDetector)
+	{
+		CurrentStealthState = EStealthState::Exposed;
+		CurrentBrightness = 1.0f;
+		return;
+	}
+
+	// Get brightness from LightDetector
+	CurrentBrightness = LightDetector->GetBrightness();
+
+	// Clamp brightness to valid range
+	CurrentBrightness = FMath::Clamp(CurrentBrightness, 0.0f, 1.0f);
+
+	// Determine stealth state based on brightness
+	EStealthState NewState;
+
+	if (CurrentBrightness < FullyStealthThreshold)
+	{
+		NewState = EStealthState::FullyStealth;
+	}
+	else if (CurrentBrightness < PartiallyStealthThreshold)
+	{
+		NewState = EStealthState::PartiallyStealth;
+	}
+	else
+	{
+		NewState = EStealthState::Exposed;
+	}
+
+	// State change notification
+	if (NewState != CurrentStealthState)
+	{
+		CurrentStealthState = NewState;
+
+		// Debug
+		if (GEngine)
+		{
+			FString StateName;
+			FColor StateColor;
+
+			switch (CurrentStealthState)
+			{
+			case EStealthState::FullyStealth:
+				StateName = TEXT("FULLY STEALTH");
+				StateColor = FColor::Green;
+				break;
+			case EStealthState::PartiallyStealth:
+				StateName = TEXT("PARTIALLY STEALTH");
+				StateColor = FColor::Yellow;
+				break;
+			case EStealthState::Exposed:
+				StateName = TEXT("EXPOSED");
+				StateColor = FColor::Red;
+				break;
+			default:
+				StateName = TEXT("UNKNOWN");
+				StateColor = FColor::White;
+				break;
+			}
+
+			GEngine->AddOnScreenDebugMessage(100, 2.0f, StateColor,
+				FString::Printf(TEXT("Stealth State: %s (Brightness: %.2f)"), *StateName, CurrentBrightness));
+		}
+	}
 }
 
 // Called to bind functionality to input
@@ -188,6 +284,20 @@ void APlayerCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCom
 
 		EnhancedInput->BindAction(LeanRightAction, ETriggerEvent::Started, this, &APlayerCharacter::StartLeanRight);
 		EnhancedInput->BindAction(LeanRightAction, ETriggerEvent::Completed, this, &APlayerCharacter::StopLeanRight);
+	}
+}
+
+float APlayerCharacter::GetStealthDetectionMultiplier() const
+{
+	switch (CurrentStealthState)
+	{
+	case EStealthState::FullyStealth:
+		return 0.2f; // AI Perception ability 20%
+	case EStealthState::PartiallyStealth:
+		return 0.6f; // AI Perception ability  60%
+	case EStealthState::Exposed:
+	default:
+		return 1.0f; // AI Perception ability  100%
 	}
 }
 

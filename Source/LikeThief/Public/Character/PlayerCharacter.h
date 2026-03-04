@@ -11,6 +11,16 @@
 
 class UCmaeraComponent;
 class UCurveFloat;
+class ALightDetector;
+
+// Stealth state enum
+UENUM(BlueprintType)
+enum class EStealthState : uint8
+{
+	FullyStealth UMETA(DisplayName = "Fully Stealth"),    // Completely invisible
+	PartiallyStealth UMETA(DisplayName = "Partially Stealth"), // Partially visible
+	Exposed UMETA(DisplayName = "Exposed")                // Expose
+};
 
 UCLASS()
 class LIKETHIEF_API APlayerCharacter : public ACharacter
@@ -67,6 +77,31 @@ public:
 
 	// Called to bind functionality to input
 	virtual void SetupPlayerInputComponent(class UInputComponent* PlayerInputComponent) override;
+
+	// --- Stealth System ---
+
+	UPROPERTY(BlueprintReadOnly, Category = "Stealth")
+	EStealthState CurrentStealthState = EStealthState::Exposed;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Stealth")
+	float CurrentBrightness = 0.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Stealth")
+	float FullyStealthThreshold = 0.3f; // 0.0 ~ 0.3: Completely invisible
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Stealth")
+	float PartiallyStealthThreshold = 0.6f; // 0.3 ~ 0.6: Partially visible
+
+	// 0.6 ~ 1.0: Exposed
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Stealth")
+	TSubclassOf<ALightDetector> LightDetectorClass;
+
+	UFUNCTION(BlueprintPure, Category = "Stealth")
+	EStealthState GetStealthState() const { return CurrentStealthState; }
+
+	UFUNCTION(BlueprintPure, Category = "Stealth")
+	float GetStealthDetectionMultiplier() const;
 
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Move")
 	float DefaultMovementSpeed = 500.0f;
@@ -231,6 +266,10 @@ private:
 	bool bWasInAir = false;
 	float FallStartZ = 0.0f;
 
+	ALightDetector* LightDetector = nullptr;
+
+	// Helper functions
+	void UpdateStealthState();
 	void MakeMovementNoise();
 	bool ShouldMakeNoise() const;
 	float GetCurrentNoiseLoudness() const;

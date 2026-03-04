@@ -2,6 +2,7 @@
 
 
 #include "Character/Enemy/EnemyAI.h"
+#include "Character/PlayerCharacter.h"
 #include "BehaviorTree/BlackboardComponent.h"
 #include "Perception/AISense_Sight.h"
 #include "Perception/AISense_Hearing.h"
@@ -13,30 +14,56 @@ AEnemyAI::AEnemyAI()
 {
 	// Create AI Perception Component
 	AIPerception = CreateDefaultSubobject<UAIPerceptionComponent>(TEXT("AIPerception"));
+	if (!AIPerception)
+	{
+		UE_LOG(LogTemp, Error, TEXT("Failed to create AIPerception component!"));
+		return;
+	}
 
 	// Create Sight Config
 	SightConfig = CreateDefaultSubobject<UAISenseConfig_Sight>(TEXT("SightConfig"));
-	SightConfig->SightRadius = 1500.0f;
-	SightConfig->LoseSightRadius = 1700.0f;
-	SightConfig->PeripheralVisionAngleDegrees = 90.0f;
-	SightConfig->DetectionByAffiliation.bDetectEnemies = true;
-	SightConfig->DetectionByAffiliation.bDetectNeutrals = true;
-	SightConfig->DetectionByAffiliation.bDetectFriendlies = true;
+	if (SightConfig)
+	{
+		SightConfig->SightRadius = 1500.0f;
+		SightConfig->LoseSightRadius = 1700.0f;
+		SightConfig->PeripheralVisionAngleDegrees = 90.0f;
+		SightConfig->DetectionByAffiliation.bDetectEnemies = true;
+		SightConfig->DetectionByAffiliation.bDetectNeutrals = true;
+		SightConfig->DetectionByAffiliation.bDetectFriendlies = true;
+	}
+	else
+	{
+		UE_LOG(LogTemp, Error, TEXT("Failed to create SightConfig!"));
+	}
 
 	// Create Hearing Config
 	HearingConfig = CreateDefaultSubobject<UAISenseConfig_Hearing>(TEXT("HearingConfig"));
-	HearingConfig->HearingRange = 1500.0f;
-	HearingConfig->DetectionByAffiliation.bDetectEnemies = true;
-	HearingConfig->DetectionByAffiliation.bDetectNeutrals = true;
-	HearingConfig->DetectionByAffiliation.bDetectFriendlies = true;
+	if (HearingConfig)
+	{
+		HearingConfig->HearingRange = 1500.0f;
+		HearingConfig->DetectionByAffiliation.bDetectEnemies = true;
+		HearingConfig->DetectionByAffiliation.bDetectNeutrals = true;
+		HearingConfig->DetectionByAffiliation.bDetectFriendlies = true;
+	}
+	else
+	{
+		UE_LOG(LogTemp, Error, TEXT("Failed to create HearingConfig!"));
+	}
 
 	// Configure AI Perception
-	AIPerception->ConfigureSense(*SightConfig);
-	AIPerception->ConfigureSense(*HearingConfig);
-	AIPerception->SetDominantSense(SightConfig->GetSenseImplementation());
+	if (AIPerception && SightConfig && HearingConfig)
+	{
+		AIPerception->ConfigureSense(*SightConfig);
+		AIPerception->ConfigureSense(*HearingConfig);
+		AIPerception->SetDominantSense(SightConfig->GetSenseImplementation());
 
-	// Bind Perception Update Event
-	AIPerception->OnTargetPerceptionUpdated.AddDynamic(this, &AEnemyAI::OnTargetPerceptionUpdated);
+		// Bind Perception Update Event
+		AIPerception->OnTargetPerceptionUpdated.AddDynamic(this, &AEnemyAI::OnTargetPerceptionUpdated);
+	}
+	else
+	{
+		UE_LOG(LogTemp, Error, TEXT("Failed to configure AI Perception!"));
+	}
 }
 
 void AEnemyAI::BeginPlay()
@@ -80,8 +107,67 @@ void AEnemyAI::HandleSense(AActor* SensedActor, const FAIStimulus& Stimulus)
 	{
 		// === AISense_Sight ===
 
-		// Set Value as Bool - IsInvestigating
+		// Get successfully sensed flag
 		bool bSuccessfullySensed = Stimulus.WasSuccessfullySensed();
+
+		// Get Player Character
+		APawn* PlayerPawn = UGameplayStatics::GetPlayerCharacter(GetWorld(), 0);
+
+		// Check if sensed actor is player and apply stealth modifier
+		if (SensedActor == PlayerPawn && bSuccessfullySensed && PlayerPawn)
+		{
+			// Try to cast to PlayerCharacter
+			APlayerCharacter* Player = Cast<APlayerCharacter>(PlayerPawn);
+			if (Player)
+			{
+				// Get stealth detection multiplier
+				float DetectionMultiplier = Player->GetStealthDetectionMultiplier();
+
+				// Get controlled pawn
+				APawn* ControlledPawn = GetPawn();
+				if (ControlledPawn)
+				{
+					// Calculate distance
+					float Distance = FVector::Dist(ControlledPawn->GetActorLocation(), Player->GetActorLocation());
+
+					// Get base sight radius (with null check)
+					float BaseSightRadius = 1500.0f; // Default value
+					if (SightConfig)
+					{
+						BaseSightRadius = SightConfig->SightRadius;
+					}
+
+					// Calculate modified sight radius based on stealth
+					float ModifiedSightRadius = BaseSightRadius * DetectionMultiplier;
+
+					// If player is too far considering stealth, don't detect
+					if (Distance > ModifiedSightRadius)
+					{
+						bSuccessfullySensed = false;
+
+						// Debug
+						if (GEngine)
+						{
+							GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Cyan,
+								FString::Printf(TEXT("Player too far: %.0f > %.0f (Stealth: %.1f%%)"),
+									Distance, ModifiedSightRadius, DetectionMultiplier * 100.0f));
+						}
+					}
+					else
+					{
+						// Debug
+						if (GEngine)
+						{
+							GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Orange,
+								FString::Printf(TEXT("Player DETECTED! Distance: %.0f / %.0f (Stealth: %.1f%%)"),
+									Distance, ModifiedSightRadius, DetectionMultiplier * 100.0f));
+						}
+					}
+				}
+			}
+		}
+
+		// Set investigating state
 		BlackboardComp->SetValueAsBool(FName("IsInvestigating"), bSuccessfullySensed);
 
 		// Branch - Stimulus Successfully Sensed?
@@ -89,11 +175,8 @@ void AEnemyAI::HandleSense(AActor* SensedActor, const FAIStimulus& Stimulus)
 		{
 			// === True Branch ===
 
-			// Get Player Character
-			APawn* PlayerCharacter = UGameplayStatics::GetPlayerCharacter(GetWorld(), 0);
-
 			// Branch - SensedActor == PlayerCharacter?
-			if (SensedActor == PlayerCharacter)
+			if (SensedActor == PlayerPawn)
 			{
 				// === True Branch ===
 
@@ -118,8 +201,6 @@ void AEnemyAI::HandleSense(AActor* SensedActor, const FAIStimulus& Stimulus)
 					}
 				}
 			}
-			// False Branch (SensedActor != PlayerCharacter)
-			// → Do nothing
 		}
 		else
 		{
@@ -137,7 +218,7 @@ void AEnemyAI::HandleSense(AActor* SensedActor, const FAIStimulus& Stimulus)
 	{
 		// === AISense_Hearing ===
 
-	// Get current investigation state
+		// Get current investigation state
 		bool bIsCurrentlyInvestigating = BlackboardComp->GetValueAsBool(FName("IsInvestigating"));
 
 		// Set Value as Bool - IsInvestigating
