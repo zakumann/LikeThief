@@ -2,11 +2,6 @@
 
 
 #include "Character/PlayerCharacter.h"
-#include "Character/LightDetector.h"
-#include "Perception/AIPerceptionStimuliSourceComponent.h"
-#include "Perception/AISense_Sight.h"
-#include "Perception/AISense_Hearing.h"
-#include "Perception/AIPerceptionSystem.h"
 #include "InputMappingContext.h"
 #include "EnhancedInputSubsystems.h"
 #include "EnhancedInputComponent.h"
@@ -18,9 +13,12 @@
 #include "DrawDebugHelpers.h"
 #include "Kismet/KismetSystemLibrary.h"
 #include "TimerManager.h"
-#include "Sound/SoundCue.h"
-#include "Components/AudioComponent.h"
 #include "Kismet/GameplayStatics.h"
+#include "Perception/AISense_Hearing.h"
+#include "Perception/AIPerceptionStimuliSourceComponent.h"
+#include "Sound/SoundCue.h"
+#include "Character/LightDetector.h"
+#include "Components/ChildActorComponent.h"
 
 // Sets default values
 APlayerCharacter::APlayerCharacter()
@@ -38,15 +36,12 @@ APlayerCharacter::APlayerCharacter()
 	Camera->SetupAttachment(CameraBloom);
 	Camera->bUsePawnControlRotation = false;
 
-	// Sound defaults
-	FootstepVolumeMultiplier = 1.0f;
-	FootstepPitchMultiplier = 1.0f;
-	LandingVolumeMultiplier = 1.0f;
-	LandingPitchMultiplier = 1.0f;
+	GetCharacterMovement()->NavAgentProps.bCanCrouch = true;
 
-	// Noise defaults
-	LandingNoiseLoudness = 1.5f;
-	bWasInAir = false;
+	// AI Perception Stimuli Source Component for footstep noise
+	StimuliSource = CreateDefaultSubobject<UAIPerceptionStimuliSourceComponent>(TEXT("StimuliSource"));
+	StimuliSource->RegisterForSense(TSubclassOf<UAISense_Hearing>());
+	StimuliSource->RegisterWithPerceptionSystem();
 }
 
 // Called when the game starts or when spawned
@@ -59,27 +54,6 @@ void APlayerCharacter::BeginPlay()
 		if (UEnhancedInputLocalPlayerSubsystem* Subsystem = ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(PlayerController->GetLocalPlayer()))
 		{
 			Subsystem->AddMappingContext(InputMapping, 0);
-		}
-	}
-
-	// AI perception
-	UAIPerceptionSystem::RegisterPerceptionStimuliSource(this, UAISense_Sight::StaticClass(), this);
-	UAIPerceptionSystem::RegisterPerceptionStimuliSource(this, UAISense_Hearing::StaticClass(), this);
-
-	// Spawn Light Detector
-	if (LightDetectorClass)
-	{
-		FActorSpawnParameters SpawnParams;
-		SpawnParams.Owner = this;
-		SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-
-		LightDetector = GetWorld()->SpawnActor<ALightDetector>(LightDetectorClass, GetActorLocation(), FRotator::ZeroRotator, SpawnParams);
-
-		if (LightDetector)
-		{
-			// Attach to character
-			LightDetector->AttachToActor(this, FAttachmentTransformRules::SnapToTargetIncludingScale);
-			UE_LOG(LogTemp, Log, TEXT("LightDetector spawned and attached"));
 		}
 	}
 
@@ -140,30 +114,6 @@ void APlayerCharacter::BeginPlay()
 	}
 }
 
-void APlayerCharacter::Landed(const FHitResult& Hit)
-{
-	Super::Landed(Hit);
-
-	// Don't make landing noise during Mantle
-	if (bIsMantling)
-	{
-		return;
-	}
-
-	// Only make noise if was actually in air (jumped or fell)
-	if (bWasInAir)
-	{
-		// Reset flag
-		bWasInAir = false;
-
-		// Play landing sound
-		PlayLandingSound();
-
-		// Make landing noise for AI
-		MakeLandingNoise();
-	}
-}
-
 // Called every frame
 void APlayerCharacter::Tick(float DeltaTime)
 {
@@ -182,84 +132,21 @@ void APlayerCharacter::Tick(float DeltaTime)
 		}
 	}
 
-	// Track fall start height
-	if (GetCharacterMovement()->IsFalling() && !bWasInAir)
-	{
-		FallStartZ = GetActorLocation().Z;
-		bWasInAir = true;
-	}
+	// Handle Footsteps
+	HandleFootsteps(DeltaTime);
 
 	// Update Stealth State
 	UpdateStealthState();
 
-	// Make Movement Noise
-	MakeMovementNoise();
-}
-
-void APlayerCharacter::UpdateStealthState()
-{
-	if (!LightDetector)
+	// Update Light Value
+	if (LightDetector)
 	{
-		CurrentStealthState = EStealthState::Exposed;
-		CurrentBrightness = 1.0f;
-		return;
-	}
-
-	// Get brightness from LightDetector
-	CurrentBrightness = LightDetector->GetBrightness();
-
-	// Clamp brightness to valid range
-	CurrentBrightness = FMath::Clamp(CurrentBrightness, 0.0f, 1.0f);
-
-	// Determine stealth state based on brightness
-	EStealthState NewState;
-
-	if (CurrentBrightness < FullyStealthThreshold)
-	{
-		NewState = EStealthState::FullyStealth;
-	}
-	else if (CurrentBrightness < PartiallyStealthThreshold)
-	{
-		NewState = EStealthState::PartiallyStealth;
-	}
-	else
-	{
-		NewState = EStealthState::Exposed;
-	}
-
-	// State change notification
-	if (NewState != CurrentStealthState)
-	{
-		CurrentStealthState = NewState;
-
-		// Debug
-		if (GEngine)
+		ALightDetector* Detector = Cast<ALightDetector>(LightDetector);
+		if (Detector)
 		{
-			FString StateName;
-			FColor StateColor;
-
-			switch (CurrentStealthState)
-			{
-			case EStealthState::FullyStealth:
-				StateName = TEXT("FULLY STEALTH");
-				StateColor = FColor::Green;
-				break;
-			case EStealthState::PartiallyStealth:
-				StateName = TEXT("PARTIALLY STEALTH");
-				StateColor = FColor::Yellow;
-				break;
-			case EStealthState::Exposed:
-				StateName = TEXT("EXPOSED");
-				StateColor = FColor::Red;
-				break;
-			default:
-				StateName = TEXT("UNKNOWN");
-				StateColor = FColor::White;
-				break;
-			}
-
-			GEngine->AddOnScreenDebugMessage(100, 2.0f, StateColor,
-				FString::Printf(TEXT("Stealth State: %s (Brightness: %.2f)"), *StateName, CurrentBrightness));
+			float Brightness = Detector->CalculateBrightness();
+			// Normalize (0-255 → 0-1)
+			CurrentLightValue = FMath::Clamp(Brightness / 255.0f, 0.0f, 1.0f);
 		}
 	}
 }
@@ -287,17 +174,56 @@ void APlayerCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCom
 	}
 }
 
+float APlayerCharacter::GetLightValue() const
+{
+	return CurrentLightValue;
+}
+
+void APlayerCharacter::UpdateStealthState()
+{
+	if (!LightDetector)
+	{
+		CurrentStealthState = EStealthState::Exposed;
+		return;
+	}
+
+	ALightDetector* Detector = Cast<ALightDetector>(LightDetector);
+	if (!Detector)
+	{
+		CurrentStealthState = EStealthState::Exposed;
+		return;
+	}
+
+	float Brightness = Detector->CalculateBrightness();
+	// Normalize
+	float NormalizedBrightness = Brightness / 255.0f;
+
+	if (NormalizedBrightness <= FullyStealthThreshold)
+	{
+		CurrentStealthState = EStealthState::FullyStealth;
+	}
+	else if (NormalizedBrightness <= PartiallyStealthThreshold)
+	{
+		CurrentStealthState = EStealthState::PartiallyStealth;
+	}
+	else
+	{
+		CurrentStealthState = EStealthState::Exposed;
+	}
+}
+
 float APlayerCharacter::GetStealthDetectionMultiplier() const
 {
 	switch (CurrentStealthState)
 	{
 	case EStealthState::FullyStealth:
-		return 0.2f; // AI Perception ability 20%
+		return 0.2f;
 	case EStealthState::PartiallyStealth:
-		return 0.6f; // AI Perception ability  60%
+		return 0.6f;
 	case EStealthState::Exposed:
+		return 1.0f;
 	default:
-		return 1.0f; // AI Perception ability  100%
+		return 1.0f;
 	}
 }
 
@@ -317,6 +243,83 @@ void APlayerCharacter::Move(const FInputActionValue& InputValue)
 		// Add movement Input
 		AddMovementInput(ForwardDirection, InputVector.Y);
 		AddMovementInput(RightDirection, InputVector.X);
+	}
+}
+
+void APlayerCharacter::Landed(const FHitResult& Hit)
+{
+	Super::Landed(Hit);
+
+	// Reset Mantle State
+	if (bIsMantling)
+	{
+		return;
+	}
+
+	if (LandingSoundCue)
+	{
+		UGameplayStatics::PlaySoundAtLocation(this, LandingSoundCue, GetActorLocation());
+	}
+
+	// AI Noise Event for landing
+	UAISense_Hearing::ReportNoiseEvent(GetWorld(), GetActorLocation(), LandingNoiseLoudness, this, NoiseRange, FName("Landing"));
+
+	if (GEngine)
+	{
+		GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Red, TEXT("Landing Noise! AI will detection."));
+	}
+}
+
+void APlayerCharacter::HandleFootsteps(float DeltaTime)
+{
+	// If character is crouching, mantling, or in the air, reset the footstep timer and do not play footstep sounds
+	if (bIsCrouching || bIsMantling || CharacterMovement->IsFalling())
+	{
+		FootstepTimer = 0.0f; // Reset timer when not walking
+		return;
+	}
+
+	// Condition: Check if character is moving(velocity > 0)
+	float CurrentSpeed = GetVelocity().Size2D();
+
+	// if character is not moving, reset the footstep timer and do not play footstep sounds
+	if (CurrentSpeed < 10.0f)
+	{
+		FootstepTimer = 0.0f;
+		return;
+	}
+
+	// Character is moving and on the ground, increment the footstep timer
+	FootstepTimer += DeltaTime;
+
+	// If the footstep timer exceeds the interval, play footstep sound and report noise event to AI Perception system
+	if (FootstepTimer >= FootstepInterval)
+	{
+		// 1. Play footstep sound
+		if (FootstepSoundCue)
+		{
+			UGameplayStatics::PlaySoundAtLocation(this, FootstepSoundCue, GetActorLocation());
+		}
+
+		// 2. AI Perception - Report noise event to AI Perception system
+		UAISense_Hearing::ReportNoiseEvent(
+			GetWorld(),
+			GetActorLocation(),
+			FootstepLoudness,
+			this,
+			NoiseRange,
+			FName("Footstep")
+		);
+
+		// Timer reset after playing footstep sound and reporting noise event
+		FootstepTimer = 0.0f;
+
+		// Debug message to confirm footstep sound
+		
+		if (GEngine)
+		{
+			GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Yellow, TEXT("Noise! AI will detection."));
+		}
 	}
 }
 
@@ -500,168 +503,6 @@ void APlayerCharacter::MantleUp()
 	MantleTimeline.PlayFromStart();
 }
 
-void APlayerCharacter::MakeMovementNoise()
-{
-	// Check if should make noise
-	if (!ShouldMakeNoise())
-	{
-		return;
-	}
-
-	// Check time interval
-	float CurrentTime = GetWorld()->GetTimeSeconds();
-	if (CurrentTime - LastNoiseTime < MovementNoiseInterval)
-	{
-		return;
-	}
-
-	// Update last noise time
-	LastNoiseTime = CurrentTime;
-
-	// Get noise loudness
-	float NoiseLoudness = GetCurrentNoiseLoudness();
-
-	// Play Footstep Sound
-	PlayFootstepSound();
-
-	// Report noise event
-	UAISense_Hearing::ReportNoiseEvent(GetWorld(), GetActorLocation(), NoiseLoudness, this, NoiseRange, FName("Footstep"));
-
-	// Debug
-	if (GEngine)
-	{
-		FColor DebugColor = bIsCrouching ? FColor::Green : FColor::Yellow;
-		GEngine->AddOnScreenDebugMessage(-1, 0.5f, DebugColor,
-			FString::Printf(TEXT("Footstep Noise: %.2f"), NoiseLoudness));
-	}
-}
-
-bool APlayerCharacter::ShouldMakeNoise() const
-{
-	// Don't make noise when crouching
-	if (bIsCrouching)
-	{
-		return false;
-	}
-
-	// Don't make noise when mantling
-	if (bIsMantling)
-	{
-		return false;
-	}
-
-	// Don't make noise when not moving
-	FVector Velocity = GetVelocity();
-	Velocity.Z = 0.0f; // Ignore vertical velocity
-	float Speed = Velocity.Size();
-
-	if (Speed < 10.0f) // Minimum speed threshold
-	{
-		return false;
-	}
-
-	// Don't make noise when falling
-	if (GetCharacterMovement()->IsFalling())
-	{
-		return false;
-	}
-
-	return true;
-}
-
-float APlayerCharacter::GetCurrentNoiseLoudness() const
-{
-	// Get horizontal velocity
-	FVector Velocity = GetVelocity();
-	Velocity.Z = 0.0f;
-	float Speed = Velocity.Size();
-
-	// Get max walk speed 
-	float MaxWalkSpeed = GetCharacterMovement()->MaxWalkSpeed;
-
-	// Calculate loudness based on speed
-	float SpeedRatio = FMath::Clamp(Speed / MaxWalkSpeed, 0.0f, 1.0f);
-
-	// Lerp between walk and run loudness
-	float NoiseLoudness = FMath::Lerp(WalkNoiseLoudness, RunNoiseLoudness, SpeedRatio);
-
-	return NoiseLoudness;
-}
-
-void APlayerCharacter::PlayFootstepSound()
-{
-	// Check if FootstepSoundCue is assigned
-	if (!FootstepSoundCue)
-	{
-		return;
-	}
-
-	// Get Current speed for dynamic volume/pitch
-	FVector Velocity = GetVelocity();
-	Velocity.Z = 0.0f;
-	float Speed = Velocity.Size();
-	float MaxWalkSpeed = GetCharacterMovement()->MaxWalkSpeed;
-	float SpeedRatio = FMath::Clamp(Speed / MaxWalkSpeed, 0.0f, 1.0f);
-
-	// Calculate volume and pitch based on speed
-	float Volume = FMath::Lerp(0.5f, 1.0f, SpeedRatio) * FootstepVolumeMultiplier;
-	float Pitch = FMath::Lerp(0.9f, 1.1f, SpeedRatio) * FootstepPitchMultiplier;
-
-	// Play sound at player location
-	UGameplayStatics::PlaySoundAtLocation(GetWorld(), FootstepSoundCue, GetActorLocation(), Volume, Pitch);
-}
-
-void APlayerCharacter::PlayLandingSound()
-{
-	// Use LandingSoundCue if available, otherwise use FootstepSoundCue
-	USoundCue* SoundToPlay = LandingSoundCue ? LandingSoundCue : FootstepSoundCue;
-
-	if (!SoundToPlay)
-	{
-		return;
-	}
-
-	// Dynamic volume and pitch based on fall intensity
-	float Volume = 1.0f * LandingVolumeMultiplier;
-	float Pitch = 1.0f * LandingPitchMultiplier;
-
-	// Play sound at player location
-	UGameplayStatics::PlaySoundAtLocation(
-		GetWorld(),
-		SoundToPlay,
-		GetActorLocation(),
-		Volume,
-		Pitch
-	);
-
-	// Debug
-	if (GEngine)
-	{
-		GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Cyan,
-			TEXT("Landing Sound Played"));
-	}
-}
-
-void APlayerCharacter::MakeLandingNoise()
-{
-	// Report noise event for AI
-	UAISense_Hearing::ReportNoiseEvent(
-		GetWorld(),
-		GetActorLocation(),
-		LandingNoiseLoudness,
-		this,
-		NoiseRange,
-		FName("Landing")
-	);
-
-	// Debug
-	if (GEngine)
-	{
-		GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Red,
-			FString::Printf(TEXT("Landing Noise: %.2f"), LandingNoiseLoudness));
-	}
-}
-
 void APlayerCharacter::MantleUpdate(float Alpha)
 {
 	// Lerp Actor Location
@@ -718,6 +559,7 @@ void APlayerCharacter::StartCrouch()
 	bIsCrouching = true;
 	CrouchingTimeline.Play();
 	CharacterMovement->MaxWalkSpeed = CrouchMovementSpeed;
+	ACharacter::Crouch();
 }
 
 void APlayerCharacter::StopCrouch()
@@ -727,6 +569,7 @@ void APlayerCharacter::StopCrouch()
 		bIsCrouching = false;
 		CrouchingTimeline.Reverse();
 		CharacterMovement->MaxWalkSpeed = DefaultMovementSpeed;
+		ACharacter::UnCrouch();
 	}
 }
 

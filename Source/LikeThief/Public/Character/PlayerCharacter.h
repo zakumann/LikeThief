@@ -6,20 +6,17 @@
 #include "GameFramework/Character.h"
 #include "InputActionValue.h"
 #include "Components/TimelineComponent.h"
-#include "Sound/SoundCue.h"
 #include "PlayerCharacter.generated.h"
 
 class UCmaeraComponent;
 class UCurveFloat;
-class ALightDetector;
 
-// Stealth state enum
 UENUM(BlueprintType)
 enum class EStealthState : uint8
 {
-	FullyStealth UMETA(DisplayName = "Fully Stealth"),    // Completely invisible
-	PartiallyStealth UMETA(DisplayName = "Partially Stealth"), // Partially visible
-	Exposed UMETA(DisplayName = "Exposed")                // Expose
+	FullyStealth UMETA(DisplayName = "Fully Stealth"),
+	PartiallyStealth UMETA(DisplayName = "Partially Stealth"),
+	Exposed UMETA(DisplayName = "Exposed")
 };
 
 UCLASS()
@@ -40,7 +37,6 @@ public:
 protected:
 	// Called when the game starts or when spawned
 	virtual void BeginPlay() override;
-	virtual void Landed(const FHitResult& Hit) override;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = Input)
 	class UInputMappingContext* InputMapping;
@@ -70,7 +66,43 @@ protected:
 
 	//--- walkspeed
 	class UCharacterMovementComponent* CharacterMovement = GetCharacterMovement();
+public:
+	// AIPerception Stimuli Source Component for footstep noise
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "AI")
+	class UAIPerceptionStimuliSourceComponent* StimuliSource;
+protected:
+	// --- Footstep system ---
+	// Footstep sound cue
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Audio")
+	class USoundCue* FootstepSoundCue;
 
+	// Footstep interval in seconds
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Audio")
+	float FootstepInterval = 0.4f;
+
+	// AI can hear footstep within this range
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Audio")
+	float NoiseRange = 1000.0f;
+
+	// Loudness of the footstep
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Audio")
+	float FootstepLoudness = 0.2f;
+
+	// --- Landing System---
+	virtual void Landed(const FHitResult& Hit) override;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Audio")
+	class USoundCue* LandingSoundCue;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Audio")
+	float LandingNoiseLoudness = 1.5f;
+
+private:
+	// Timer to track footstep intervals
+	float FootstepTimer = 0.0f;
+
+	// Every frame, check if the character is moving and on the ground to play footstep sounds
+	void HandleFootsteps(float DeltaTime);
 public:	
 	// Called every frame
 	virtual void Tick(float DeltaTime) override;
@@ -78,30 +110,35 @@ public:
 	// Called to bind functionality to input
 	virtual void SetupPlayerInputComponent(class UInputComponent* PlayerInputComponent) override;
 
-	// --- Stealth System ---
-
-	UPROPERTY(BlueprintReadOnly, Category = "Stealth")
-	EStealthState CurrentStealthState = EStealthState::Exposed;
-
-	UPROPERTY(BlueprintReadOnly, Category = "Stealth")
-	float CurrentBrightness = 0.0f;
+	//--- Stealth System---
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Stealth")
+	EStealthState CurrentStealthState;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Stealth")
-	float FullyStealthThreshold = 0.3f; // 0.0 ~ 0.3: Completely invisible
+	float FullyStealthThreshold = 0.3f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Stealth")
-	float PartiallyStealthThreshold = 0.6f; // 0.3 ~ 0.6: Partially visible
+	float PartiallyStealthThreshold = 0.6f;
 
-	// 0.6 ~ 1.0: Exposed
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Stealth")
-	TSubclassOf<ALightDetector> LightDetectorClass;
-
-	UFUNCTION(BlueprintPure, Category = "Stealth")
-	EStealthState GetStealthState() const { return CurrentStealthState; }
-
-	UFUNCTION(BlueprintPure, Category = "Stealth")
+	UFUNCTION(BlueprintCallable, Category = "Stealth")
 	float GetStealthDetectionMultiplier() const;
+
+	// LightDetector Value (0.0 - 1.0)
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Stealth")
+	float GetLightValue() const;
+
+	void UpdateStealthState();
+
+	// LightDetector
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Stealth")
+	TSubclassOf<AActor> LightDetectorClass;
+
+	UPROPERTY()
+	AActor* LightDetector;
+
+	// Current Light Value (updated in Tick)
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Stealth")
+	float CurrentLightValue = 1.0f;
 
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Move")
 	float DefaultMovementSpeed = 500.0f;
@@ -172,6 +209,7 @@ protected:
 	void Jump();
 	void StopJump();
 
+
 	// --- Crouch---
 public:
 	FTimeline CrouchingTimeline;
@@ -225,58 +263,6 @@ public:
 	FVector MantleTargetLocation = FVector::ZeroVector;
 	FTimerHandle MantleCheckTimerHandle;
 
-	// --- Noise ---
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Noise")
-	float MovementNoiseInterval = 0.5f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite,Category = "Noise")
-	float WalkNoiseLoudness = 0.5f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Noise")
-	float RunNoiseLoudness = 1.0f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Noise")
-	float NoiseRange = 1000.0f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Noise")
-	float LandingNoiseLoudness = 1.5f;
-
-	// --- Footstep Sound ---
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Sound")
-	USoundCue* FootstepSoundCue;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Sound")
-	USoundCue* LandingSoundCue;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Sound")
-	float FootstepVolumeMultiplier = 1.0f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Sound")
-	float FootstepPitchMultiplier = 1.0f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Sound")
-	float LandingVolumeMultiplier = 1.0f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Sound")
-	float LandingPitchMultiplier = 1.0f;
-
-
-private:
-	float LastNoiseTime = 0.0f;
-	bool bWasInAir = false;
-	float FallStartZ = 0.0f;
-
-	ALightDetector* LightDetector = nullptr;
-
-	// Helper functions
-	void UpdateStealthState();
-	void MakeMovementNoise();
-	bool ShouldMakeNoise() const;
-	float GetCurrentNoiseLoudness() const;
-	void PlayFootstepSound();
-	void PlayLandingSound();
-	void MakeLandingNoise();
-public:
 	UFUNCTION()
 	void MantleUpdate(float Alpha);
 

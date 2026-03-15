@@ -40,6 +40,16 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AI")
 	UAISenseConfig_Hearing* HearingConfig;
 
+	// === Detection Settings ===
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Detection")
+	float ProximityDetectionRange = 50.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Detection")
+	float ProximityDetectionAngle = 90.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Detection")
+	float LightThreshold = 0.5f;
+
 private:
 	UFUNCTION()
 	void OnTargetPerceptionUpdated(AActor* Actor, FAIStimulus Stimulus);
