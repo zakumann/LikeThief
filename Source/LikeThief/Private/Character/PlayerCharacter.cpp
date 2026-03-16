@@ -1,39 +1,49 @@
 // Fill out your copyright notice in the Description page of Project Settings.
 
+
 #include "Character/PlayerCharacter.h"
+#include "InputMappingContext.h"
+#include "EnhancedInputSubsystems.h"
+#include "EnhancedInputComponent.h"
 #include "Camera/CameraComponent.h"
 #include "GameFramework/SpringArmComponent.h"
 #include "GameFramework/CharacterMovementComponent.h"
-#include "EnhancedInputComponent.h"
-#include "EnhancedInputSubsystems.h"
 #include "Components/CapsuleComponent.h"
+#include "Curves/CurveFloat.h"
+#include "DrawDebugHelpers.h"
+#include "Kismet/KismetSystemLibrary.h"
+#include "TimerManager.h"
 #include "Kismet/GameplayStatics.h"
 #include "Perception/AISense_Sight.h"
 #include "Perception/AISense_Hearing.h"
+#include "Perception/AIPerceptionStimuliSourceComponent.h"
 #include "Perception/AIPerceptionComponent.h"
+#include "Sound/SoundCue.h"
 #include "Character/LightDetector.h"
+#include "Components/ChildActorComponent.h"
 
+// Sets default values
 APlayerCharacter::APlayerCharacter()
 {
+ 	// Set this character to call Tick() every frame.  You can turn this off to improve performance if you don't need it.
 	PrimaryActorTick.bCanEverTick = true;
 
-	// Create Spring Arm
-	SpringArm = CreateDefaultSubobject<USpringArmComponent>(TEXT("SpringArm"));
-	SpringArm->SetupAttachment(RootComponent);
-	SpringArm->TargetArmLength = 300.0f;
-	SpringArm->bUsePawnControlRotation = true;
+	CameraBloom = CreateDefaultSubobject<USpringArmComponent>("CameraBloom");
+	CameraBloom->SetupAttachment(RootComponent);
+	CameraBloom->SetRelativeLocation(FVector(0.0f, 0.0f, 60.0f));
+	CameraBloom->TargetArmLength = 0.0f;
+	CameraBloom->bUsePawnControlRotation = true;
 
-	// Create Camera
 	Camera = CreateDefaultSubobject<UCameraComponent>(TEXT("Camera"));
-	Camera->SetupAttachment(SpringArm, USpringArmComponent::SocketName);
+	Camera->SetupAttachment(CameraBloom);
 	Camera->bUsePawnControlRotation = false;
 
-	// Configure Character Movement
-	GetCharacterMovement()->bOrientRotationToMovement = true;
-	GetCharacterMovement()->RotationRate = FRotator(0.0f, 500.0f, 0.0f);
-	GetCharacterMovement()->MaxWalkSpeed = 600.0f;
-	GetCharacterMovement()->MinAnalogWalkSpeed = 20.0f;
-	GetCharacterMovement()->BrakingDecelerationWalking = 2000.0f;
+	GetCharacterMovement()->NavAgentProps.bCanCrouch = true;
+
+	// AI Perception Stimuli Source Component for footstep noise
+	StimuliSource = CreateDefaultSubobject<UAIPerceptionStimuliSourceComponent>(TEXT("StimuliSource"));
+	StimuliSource->RegisterForSense(TSubclassOf<UAISense_Hearing>());
+	StimuliSource->RegisterWithPerceptionSystem();
 
 	// Don't rotate character to camera direction
 	bUseControllerRotationPitch = false;
@@ -44,16 +54,16 @@ APlayerCharacter::APlayerCharacter()
 	CurrentStealthState = EStealthState::Exposed;
 }
 
+// Called when the game starts or when spawned
 void APlayerCharacter::BeginPlay()
 {
 	Super::BeginPlay();
-
-	// Add Input Mapping Context
+	
 	if (APlayerController* PlayerController = Cast<APlayerController>(Controller))
 	{
 		if (UEnhancedInputLocalPlayerSubsystem* Subsystem = ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(PlayerController->GetLocalPlayer()))
 		{
-			Subsystem->AddMappingContext(DefaultMappingContext, 0);
+			Subsystem->AddMappingContext(InputMapping, 0);
 		}
 	}
 
@@ -73,17 +83,84 @@ void APlayerCharacter::BeginPlay()
 	// Register for AI Perception
 	UAIPerceptionSystem::RegisterPerceptionStimuliSource(this, UAISense_Sight::StaticClass(), this);
 	UAIPerceptionSystem::RegisterPerceptionStimuliSource(this, UAISense_Hearing::StaticClass(), this);
+
+	DefaultCameraBloomLocation = CameraBloom->GetRelativeLocation();
+
+	// Crouch Timeline
+	if (CrouchingCurve)
+	{
+		FOnTimelineFloat CrouchProgressUpdate;
+		CrouchProgressUpdate.BindUFunction(this, FName("CrouchUpdate"));
+
+		FOnTimelineEvent CrouchFinishedEvent;
+		CrouchFinishedEvent.BindUFunction(this, FName("CrouchFinished"));
+
+		CrouchingTimeline.AddInterpFloat(CrouchingCurve, CrouchProgressUpdate);
+		CrouchingTimeline.SetTimelineFinishedFunc(CrouchFinishedEvent);
+	}
+
+	CharacterMovement->MaxWalkSpeed = DefaultMovementSpeed;
+
+	// Setup Lean Left Timeline
+	if (LeanCurve) {
+		FOnTimelineFloat LeanLeftProgressUpdate;
+		LeanLeftProgressUpdate.BindUFunction(this, FName("LeanLeftUpdate"));
+
+		FOnTimelineEvent LeanLeftFinishedEvent;
+		LeanLeftFinishedEvent.BindUFunction(this, FName("LeanLeftFinished"));
+
+		LeanLeftTimeline.AddInterpFloat(LeanCurve, LeanLeftProgressUpdate);
+		LeanLeftTimeline.SetTimelineFinishedFunc(LeanLeftFinishedEvent);
+
+
+	}		
+	// Setup Lean Right Timeline
+	if (LeanCurve)
+	{
+		FOnTimelineFloat LeanRightProgressUpdate;
+		LeanRightProgressUpdate.BindUFunction(this, FName("LeanRightUpdate"));
+
+		FOnTimelineEvent LeanRightFinishedEvent;
+		LeanRightFinishedEvent.BindUFunction(this, FName("LeanRightFinished"));
+
+		LeanRightTimeline.AddInterpFloat(LeanCurve, LeanRightProgressUpdate);
+		LeanRightTimeline.SetTimelineFinishedFunc(LeanRightFinishedEvent);
+	}
+
+	// Setup Mantle Timeline(T_Mantle)
+	if (MantleCurve)
+	{
+		FOnTimelineFloat MantleProgressUpdate;
+		MantleProgressUpdate.BindUFunction(this, FName("MantleUpdate"));
+
+		FOnTimelineEvent MantleFinishedEvent;
+		MantleFinishedEvent.BindUFunction(this, FName("MantleFinished"));
+
+		MantleTimeline.AddInterpFloat(MantleCurve, MantleProgressUpdate);
+		MantleTimeline.SetTimelineFinishedFunc(MantleFinishedEvent);
+	}
 }
 
+// Called every frame
 void APlayerCharacter::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 
-	// Update Crouch
-	UpdateCrouch(DeltaTime);
+	CrouchingTimeline.TickTimeline(DeltaTime);
+	LeanLeftTimeline.TickTimeline(DeltaTime);
+	LeanRightTimeline.TickTimeline(DeltaTime);
+	MantleTimeline.TickTimeline(DeltaTime);
 
-	// Update Lean
-	UpdateLean(DeltaTime);
+	if (bIsMantling)
+	{
+		if (CheckMantleOverhead())
+		{
+			CancelMantle();
+		}
+	}
+
+	// Handle Footsteps
+	HandleFootsteps(DeltaTime);
 
 	// Update Stealth State
 	UpdateStealthState();
@@ -100,260 +177,32 @@ void APlayerCharacter::Tick(float DeltaTime)
 		}
 	}
 
-	// Handle Jump Hold for Mantle
-	if (bIsHoldingJump)
-	{
-		JumpHoldTime += DeltaTime;
-
-		if (JumpHoldTime >= JumpHoldThreshold && !bIsMantling)
-		{
-			CheckMantle();
-		}
-	}
-
-	// Make Movement Noise
-	MakeMovementNoise();
-
 	// Track if in air
 	bWasInAir = GetCharacterMovement()->IsFalling();
 }
 
+// Called to bind functionality to input
 void APlayerCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputComponent)
 {
 	Super::SetupPlayerInputComponent(PlayerInputComponent);
 
-	if (UEnhancedInputComponent* EnhancedInputComponent = CastChecked<UEnhancedInputComponent>(PlayerInputComponent))
+	if (UEnhancedInputComponent* EnhancedInput = CastChecked<UEnhancedInputComponent>(PlayerInputComponent))
 	{
-		// Move
-		EnhancedInputComponent->BindAction(MoveAction, ETriggerEvent::Triggered, this, &APlayerCharacter::Move);
-
-		// Look
-		EnhancedInputComponent->BindAction(LookAction, ETriggerEvent::Triggered, this, &APlayerCharacter::Look);
-
-		// Jump
-		EnhancedInputComponent->BindAction(JumpAction, ETriggerEvent::Started, this, &APlayerCharacter::StartJump);
-		EnhancedInputComponent->BindAction(JumpAction, ETriggerEvent::Completed, this, &APlayerCharacter::StopJump);
-
+		EnhancedInput->BindAction(MoveAction, ETriggerEvent::Triggered, this, &APlayerCharacter::Move);
+		EnhancedInput->BindAction(LookAction, ETriggerEvent::Triggered, this, &APlayerCharacter::Look);
+		EnhancedInput->BindAction(JumpAction, ETriggerEvent::Started, this, &APlayerCharacter::Jump);
+		EnhancedInput->BindAction(JumpAction, ETriggerEvent::Completed, this, &APlayerCharacter::StopJump);
 		// Crouch
-		EnhancedInputComponent->BindAction(CrouchAction, ETriggerEvent::Started, this, &APlayerCharacter::StartCrouch);
-		EnhancedInputComponent->BindAction(CrouchAction, ETriggerEvent::Completed, this, &APlayerCharacter::StopCrouch);
+		EnhancedInput->BindAction(CrouchAction, ETriggerEvent::Started, this, &APlayerCharacter::ToggleCrouch);
 
 		// Lean
-		EnhancedInputComponent->BindAction(LeanLeftAction, ETriggerEvent::Started, this, &APlayerCharacter::StartLeanLeft);
-		EnhancedInputComponent->BindAction(LeanLeftAction, ETriggerEvent::Completed, this, &APlayerCharacter::StopLeanLeft);
-		EnhancedInputComponent->BindAction(LeanRightAction, ETriggerEvent::Started, this, &APlayerCharacter::StartLeanRight);
-		EnhancedInputComponent->BindAction(LeanRightAction, ETriggerEvent::Completed, this, &APlayerCharacter::StopLeanRight);
+		EnhancedInput->BindAction(LeanLeftAction, ETriggerEvent::Started, this, &APlayerCharacter::StartLeanLeft);
+		EnhancedInput->BindAction(LeanLeftAction, ETriggerEvent::Completed, this, &APlayerCharacter::StopLeanLeft);
+
+		EnhancedInput->BindAction(LeanRightAction, ETriggerEvent::Started, this, &APlayerCharacter::StartLeanRight);
+		EnhancedInput->BindAction(LeanRightAction, ETriggerEvent::Completed, this, &APlayerCharacter::StopLeanRight);
 	}
 }
-
-void APlayerCharacter::Landed(const FHitResult& Hit)
-{
-	Super::Landed(Hit);
-
-	// Reset mantle state
-	bIsMantling = false;
-	JumpHoldTime = 0.0f;
-
-	// Make landing noise
-	if (!bIsMantling && bWasInAir)
-	{
-		PlayLandingSound();
-		MakeLandingNoise();
-	}
-
-	bWasInAir = false;
-}
-
-// === Movement Functions ===
-
-void APlayerCharacter::Move(const FInputActionValue& Value)
-{
-	FVector2D MovementVector = Value.Get<FVector2D>();
-
-	if (Controller != nullptr)
-	{
-		const FRotator Rotation = Controller->GetControlRotation();
-		const FRotator YawRotation(0, Rotation.Yaw, 0);
-
-		const FVector ForwardDirection = FRotationMatrix(YawRotation).GetUnitAxis(EAxis::X);
-		const FVector RightDirection = FRotationMatrix(YawRotation).GetUnitAxis(EAxis::Y);
-
-		AddMovementInput(ForwardDirection, MovementVector.Y);
-		AddMovementInput(RightDirection, MovementVector.X);
-	}
-}
-
-void APlayerCharacter::Look(const FInputActionValue& Value)
-{
-	FVector2D LookAxisVector = Value.Get<FVector2D>();
-
-	if (Controller != nullptr)
-	{
-		AddControllerYawInput(LookAxisVector.X);
-		AddControllerPitchInput(LookAxisVector.Y);
-	}
-}
-
-void APlayerCharacter::StartJump()
-{
-	bIsHoldingJump = true;
-	JumpHoldTime = 0.0f;
-	Jump();
-}
-
-void APlayerCharacter::StopJump()
-{
-	bIsHoldingJump = false;
-	JumpHoldTime = 0.0f;
-	StopJumping();
-}
-
-void APlayerCharacter::StartCrouch()
-{
-	if (!bIsCrouching && !bIsCrouchingInterpolating)
-	{
-		bIsCrouching = true;
-		bIsCrouchingInterpolating = true;
-		CrouchInterpolationTime = 0.0f;
-	}
-}
-
-void APlayerCharacter::StopCrouch()
-{
-	if (bIsCrouching && !bIsCrouchingInterpolating)
-	{
-		bIsCrouching = false;
-		bIsCrouchingInterpolating = true;
-		CrouchInterpolationTime = 0.0f;
-	}
-}
-
-void APlayerCharacter::UpdateCrouch(float DeltaTime)
-{
-	if (bIsCrouchingInterpolating)
-	{
-		CrouchInterpolationTime += DeltaTime * CrouchSpeed;
-
-		float TargetHeight = bIsCrouching ? CrouchingCapsuleHalfHeight : StandingCapsuleHalfHeight;
-		float CurrentHeight = GetCapsuleComponent()->GetUnscaledCapsuleHalfHeight();
-		float NewHeight = FMath::Lerp(CurrentHeight, TargetHeight, CrouchInterpolationTime);
-
-		GetCapsuleComponent()->SetCapsuleHalfHeight(NewHeight);
-
-		if (FMath::IsNearlyEqual(NewHeight, TargetHeight, 1.0f))
-		{
-			GetCapsuleComponent()->SetCapsuleHalfHeight(TargetHeight);
-			bIsCrouchingInterpolating = false;
-		}
-	}
-}
-
-void APlayerCharacter::StartLeanLeft()
-{
-	if (!bIsLeaningLeft && !bIsLeaningRight && !bIsLeaningInterpolating)
-	{
-		bIsLeaningLeft = true;
-		bIsLeaningInterpolating = true;
-		LeanInterpolationTime = 0.0f;
-		TargetLeanRotation = FRotator(0.0f, 0.0f, LeanAngle);
-		TargetLeanLocation = FVector(0.0f, -LeanDistance, 0.0f);
-	}
-}
-
-void APlayerCharacter::StopLeanLeft()
-{
-	if (bIsLeaningLeft && !bIsLeaningInterpolating)
-	{
-		bIsLeaningLeft = false;
-		bIsLeaningInterpolating = true;
-		LeanInterpolationTime = 0.0f;
-		TargetLeanRotation = FRotator::ZeroRotator;
-		TargetLeanLocation = FVector::ZeroVector;
-	}
-}
-
-void APlayerCharacter::StartLeanRight()
-{
-	if (!bIsLeaningRight && !bIsLeaningLeft && !bIsLeaningInterpolating)
-	{
-		bIsLeaningRight = true;
-		bIsLeaningInterpolating = true;
-		LeanInterpolationTime = 0.0f;
-		TargetLeanRotation = FRotator(0.0f, 0.0f, -LeanAngle);
-		TargetLeanLocation = FVector(0.0f, LeanDistance, 0.0f);
-	}
-}
-
-void APlayerCharacter::StopLeanRight()
-{
-	if (bIsLeaningRight && !bIsLeaningInterpolating)
-	{
-		bIsLeaningRight = false;
-		bIsLeaningInterpolating = true;
-		LeanInterpolationTime = 0.0f;
-		TargetLeanRotation = FRotator::ZeroRotator;
-		TargetLeanLocation = FVector::ZeroVector;
-	}
-}
-
-void APlayerCharacter::UpdateLean(float DeltaTime)
-{
-	if (bIsLeaningInterpolating)
-	{
-		LeanInterpolationTime += DeltaTime * LeanSpeed;
-
-		FRotator CurrentRotation = Camera->GetRelativeRotation();
-		FVector CurrentLocation = Camera->GetRelativeLocation();
-
-		FRotator NewRotation = FMath::Lerp(CurrentRotation, TargetLeanRotation, LeanInterpolationTime);
-		FVector NewLocation = FMath::Lerp(CurrentLocation, TargetLeanLocation, LeanInterpolationTime);
-
-		Camera->SetRelativeRotation(NewRotation);
-		Camera->SetRelativeLocation(NewLocation);
-
-		if (LeanInterpolationTime >= 1.0f)
-		{
-			Camera->SetRelativeRotation(TargetLeanRotation);
-			Camera->SetRelativeLocation(TargetLeanLocation);
-			bIsLeaningInterpolating = false;
-		}
-	}
-}
-
-// === Mantle System ===
-
-void APlayerCharacter::CheckMantle()
-{
-	FVector Start = GetActorLocation();
-	FVector ForwardVector = GetActorForwardVector();
-	FVector End = Start + (ForwardVector * MantleCheckDistance);
-
-	FHitResult HitResult;
-	FCollisionQueryParams QueryParams;
-	QueryParams.AddIgnoredActor(this);
-
-	if (GetWorld()->LineTraceSingleByChannel(HitResult, Start, End, ECC_WorldStatic, QueryParams))
-	{
-		FVector MantleLocation = HitResult.Location + FVector(0, 0, MantleHeight);
-
-		FVector OverheadStart = MantleLocation;
-		FVector OverheadEnd = MantleLocation + FVector(0, 0, 100);
-
-		if (!GetWorld()->LineTraceSingleByChannel(HitResult, OverheadStart, OverheadEnd, ECC_WorldStatic, QueryParams))
-		{
-			PerformMantle(MantleLocation);
-		}
-	}
-}
-
-void APlayerCharacter::PerformMantle(FVector MantleLocation)
-{
-	bIsMantling = true;
-	SetActorLocation(MantleLocation);
-	GetCharacterMovement()->Velocity = FVector::ZeroVector;
-}
-
-// === Stealth System ===
 
 float APlayerCharacter::GetStealthDetectionMultiplier() const
 {
@@ -391,6 +240,7 @@ void APlayerCharacter::UpdateStealthState()
 	}
 
 	float Brightness = Detector->CalculateBrightness();
+	// Normalize
 	float NormalizedBrightness = Brightness / 255.0f;
 
 	if (NormalizedBrightness <= FullyStealthThreshold)
@@ -407,101 +257,449 @@ void APlayerCharacter::UpdateStealthState()
 	}
 }
 
-// === Noise System ===
-
-void APlayerCharacter::MakeMovementNoise()
+void APlayerCharacter::Move(const FInputActionValue& InputValue)
 {
-	TimeSinceLastFootstep += GetWorld()->GetDeltaSeconds();
+	FVector2D InputVector = InputValue.Get<FVector2D>();
 
-	if (ShouldMakeNoise() && TimeSinceLastFootstep >= FootstepNoiseInterval)
+	if (IsValid(Controller))
 	{
-		float Loudness = GetCurrentNoiseLoudness();
+		// Get forward direction
+		const FRotator Rotation = Controller->GetControlRotation();
+		const FRotator YawRotation(0, Rotation.Yaw, 0);
 
+		const FVector ForwardDirection = FRotationMatrix(YawRotation).GetUnitAxis(EAxis::X);
+		const FVector RightDirection = FRotationMatrix(YawRotation).GetUnitAxis(EAxis::Y);
+
+		// Add movement Input
+		AddMovementInput(ForwardDirection, InputVector.Y);
+		AddMovementInput(RightDirection, InputVector.X);
+	}
+}
+
+void APlayerCharacter::Landed(const FHitResult& Hit)
+{
+	Super::Landed(Hit);
+
+	bIsMantling = false;
+
+	// Reset Mantle State
+	if (bIsMantling)
+	{
+		return;
+	}
+
+	if (LandingSoundCue)
+	{
+		UGameplayStatics::PlaySoundAtLocation(this, LandingSoundCue, GetActorLocation());
+	}
+
+	// AI Noise Event for landing
+	UAISense_Hearing::ReportNoiseEvent(GetWorld(), GetActorLocation(), LandingNoiseLoudness, this, NoiseRange, FName("Landing"));
+
+	if (GEngine)
+	{
+		GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Red, TEXT("Landing Noise! AI will detection."));
+	}
+
+	bWasInAir = false;
+}
+
+void APlayerCharacter::HandleFootsteps(float DeltaTime)
+{
+	// If character is crouching, mantling, or in the air, reset the footstep timer and do not play footstep sounds
+	if (bIsCrouching || bIsMantling || CharacterMovement->IsFalling())
+	{
+		FootstepTimer = 0.0f; // Reset timer when not walking
+		return;
+	}
+
+	// Condition: Check if character is moving(velocity > 0)
+	float CurrentSpeed = GetVelocity().Size2D();
+
+	// if character is not moving, reset the footstep timer and do not play footstep sounds
+	if (CurrentSpeed < 10.0f)
+	{
+		FootstepTimer = 0.0f;
+		return;
+	}
+
+	// Character is moving and on the ground, increment the footstep timer
+	FootstepTimer += DeltaTime;
+
+	// If the footstep timer exceeds the interval, play footstep sound and report noise event to AI Perception system
+	if (FootstepTimer >= FootstepInterval)
+	{
+		// 1. Play footstep sound
+		if (FootstepSoundCue)
+		{
+			UGameplayStatics::PlaySoundAtLocation(this, FootstepSoundCue, GetActorLocation());
+		}
+
+		// 2. AI Perception - Report noise event to AI Perception system
 		UAISense_Hearing::ReportNoiseEvent(
 			GetWorld(),
 			GetActorLocation(),
-			Loudness,
+			FootstepLoudness,
 			this,
-			0.0f,
+			NoiseRange,
 			FName("Footstep")
 		);
 
-		PlayFootstepSound();
-		TimeSinceLastFootstep = 0.0f;
+		// Timer reset after playing footstep sound and reporting noise event
+		FootstepTimer = 0.0f;
+
+		// Debug message to confirm footstep sound
+		
+		if (GEngine)
+		{
+			GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Yellow, TEXT("Noise! AI will detection."));
+		}
 	}
 }
 
-bool APlayerCharacter::ShouldMakeNoise() const
+void APlayerCharacter::Look(const FInputActionValue& InputValue)
 {
-	if (bIsCrouching || bIsMantling || GetCharacterMovement()->IsFalling())
+	FVector2D InputVector = InputValue.Get<FVector2D>();
+
+	if (IsValid(Controller))
 	{
-		return false;
+		AddControllerYawInput(InputVector.X);
+		AddControllerPitchInput(InputVector.Y);
 	}
-
-	FVector Velocity = GetVelocity();
-	Velocity.Z = 0.0f;
-	float Speed = Velocity.Size();
-
-	return Speed > 10.0f;
 }
 
-float APlayerCharacter::GetCurrentNoiseLoudness() const
+void APlayerCharacter::Jump()
 {
-	FVector Velocity = GetVelocity();
-	Velocity.Z = 0.0f;
-	float Speed = Velocity.Size();
-	float MaxSpeed = GetCharacterMovement()->MaxWalkSpeed;
-
-	float SpeedRatio = FMath::Clamp(Speed / MaxSpeed, 0.0f, 1.0f);
-
-	return FMath::Lerp(WalkNoiseLoudness, RunNoiseLoudness, SpeedRatio);
-}
-
-void APlayerCharacter::PlayFootstepSound()
-{
-	if (FootstepSound)
+	// IsFalling?
+	if (!CharacterMovement->IsFalling())
 	{
-		FVector Velocity = GetVelocity();
-		Velocity.Z = 0.0f;
-		float Speed = Velocity.Size();
-		float MaxSpeed = GetCharacterMovement()->MaxWalkSpeed;
-		float SpeedRatio = FMath::Clamp(Speed / MaxSpeed, 0.0f, 1.0f);
+		// False: jump
+		ACharacter::Jump();
+	}
+	else
+	{
+		//True: bHold is true
+		bHold = true;
 
-		float Volume = FMath::Lerp(0.5f, 1.0f, SpeedRatio);
-		float Pitch = FMath::Lerp(0.9f, 1.1f, SpeedRatio);
-
-		UGameplayStatics::PlaySoundAtLocation(
-			this,
-			FootstepSound,
-			GetActorLocation(),
-			Volume,
-			Pitch
-		);
+		// bHold && IsFalling?
+		CheckMantleCondition();
 	}
 }
 
-void APlayerCharacter::MakeLandingNoise()
+void APlayerCharacter::StopJump()
 {
-	UAISense_Hearing::ReportNoiseEvent(
-		GetWorld(),
-		GetActorLocation(),
-		LandingNoiseLoudness,
-		this,
-		0.0f,
-		FName("Landing")
+	bHold = false;
+	ACharacter::StopJumping();
+}
+
+void APlayerCharacter::CheckMantleCondition()
+{
+	//if bHoldis true and IsFalling also true
+	if (bHold && CharacterMovement->IsFalling())
+	{
+		if (bHitDetected)
+		{
+			MantleUp();
+		}
+		else
+		{
+			MantleCheck();
+
+			// After Delay 0.001, back to CheckMantleCondition
+			GetWorld()->GetTimerManager().SetTimer(
+				MantleCheckTimerHandle,
+				this,
+				&APlayerCharacter::CheckMantleCondition,
+				MantleCheckDelay,
+				false
+			);
+		}
+	}
+}
+void APlayerCharacter::MantleCheck()
+{
+	// Step 1 : Camera Location Line Trace (Check WorldStatic)
+	FVector CameraLocation = Camera->GetComponentLocation();
+	FVector UpTraceStart = CameraLocation;
+	FVector UpTraceEnd = CameraLocation + FVector(0.0f, 0.0f, MantleOverheadCheckHeight);
+
+	FHitResult UpHitResult;
+	FCollisionQueryParams QueryParams;
+	QueryParams.AddIgnoredActor(this);
+
+	bool bUpHit = GetWorld()->LineTraceSingleByChannel(
+		UpHitResult,
+		UpTraceStart,
+		UpTraceEnd,
+		ECC_WorldStatic,
+		QueryParams
 	);
-}
 
-void APlayerCharacter::PlayLandingSound()
-{
-	if (LandingSound)
+	// Step 2: No Crash upward, front Line Trace
+	FVector CameraForward = Camera->GetForwardVector();
+	FVector ForwardTraceStart = CameraLocation;
+	FVector ForwardTraceEnd = CameraLocation + (CameraForward * 50.0f);
+
+	FHitResult LineHitResult;
+	bool bLineHit = GetWorld()->LineTraceSingleByChannel(
+		LineHitResult,
+		ForwardTraceStart,
+		ForwardTraceEnd,
+		ECC_Visibility,
+		QueryParams
+	);
+
+	// Debug Forward Line Trace
+	DrawDebugLine(GetWorld(), ForwardTraceStart, ForwardTraceEnd, bLineHit ? FColor::Green : FColor::Red, false, 0.1f);
+
+	if (bLineHit)
 	{
-		UGameplayStatics::PlaySoundAtLocation(
-			this,
-			LandingSound,
-			GetActorLocation(),
-			1.0f,
-			1.0f
+		// Step 3: Ready Sphere Trace
+		FVector LineHitLocation = LineHitResult.Location;
+		FVector ForwardOffset = CameraForward * MantleForwardDistance;
+		FVector SphereStart = LineHitLocation + ForwardOffset;
+		SphereStart.Z += 100.0f;
+
+		FVector SphereEnd = SphereStart;
+		SphereEnd.Z += 96.0f;
+
+		FHitResult SphereHitResult;
+		bool bSphereHit = GetWorld()->SweepSingleByChannel(
+			SphereHitResult,
+			SphereStart,
+			SphereEnd,
+			FQuat::Identity,
+			ECC_Visibility,
+			FCollisionShape::MakeSphere(MantleSphereRadius),
+			QueryParams
 		);
+
+		// Debug Sphere Trace
+		DrawDebugSphere(GetWorld(), SphereStart, MantleSphereRadius, 12, FColor::Yellow, false, 0.1f);
+		DrawDebugSphere(GetWorld(), SphereEnd, MantleSphereRadius, 12, bSphereHit ? FColor::Red : FColor::Green, false, 0.1f);
+		DrawDebugLine(GetWorld(), SphereStart, SphereEnd, bSphereHit ? FColor::Red : FColor::Green, false, 0.1f);
+
+		if (bSphereHit)
+		{
+			// Branch True: If crash, Mantle is impossible
+			bHitDetected = false;
+		}
+		else
+		{
+			// Branch False: If no crash, Can Mantle
+			bHitDetected = true;
+			MantleTargetLocation = LineHitLocation + ForwardOffset;
+			MantleTargetLocation.Z += 100.0f;
+		}
+	}
+	else
+	{
+		bHitDetected = false;
 	}
 }
+
+bool APlayerCharacter::CheckMantleOverhead()
+{
+	FVector ActorLocation = GetActorLocation();
+	FVector TraceStart = ActorLocation;
+	FVector TraceEnd = ActorLocation + FVector(0.0f, 0.0f, MantleOverheadCheckHeight);
+
+	FHitResult HitResult;
+	FCollisionQueryParams QueryParams;
+	QueryParams.AddIgnoredActor(this);
+
+	bool bHit = GetWorld()->SweepSingleByChannel(
+		HitResult,
+		TraceStart,
+		TraceEnd,
+		FQuat::Identity,
+		ECC_WorldStatic,
+		FCollisionShape::MakeSphere(MantleOverheadCheckRadius),
+		QueryParams
+	);
+
+	// Debug visualization
+	DrawDebugSphere(GetWorld(), TraceStart, MantleOverheadCheckRadius, 12, FColor::Cyan, false, 0.1f);
+	DrawDebugSphere(GetWorld(), TraceEnd, MantleOverheadCheckRadius, 12, bHit ? FColor::Red : FColor::Green, false, 0.1f);
+	DrawDebugLine(GetWorld(), TraceStart, TraceEnd, bHit ? FColor::Red : FColor::Green, false, 0.1f);
+
+	return bHit;
+}
+
+void APlayerCharacter::MantleUp()
+{ 
+	// Set HitDetected is false
+	bHitDetected = false;
+
+	bIsMantling = true;
+
+	// Timeline play from start
+	MantleTimeline.PlayFromStart();
+}
+
+void APlayerCharacter::MantleUpdate(float Alpha)
+{
+	// Lerp Actor Location
+	FVector CurrentLocation = GetActorLocation();
+	FVector NewLocation = FMath::Lerp(CurrentLocation, MantleTargetLocation, Alpha);
+
+	SetActorLocation(NewLocation);
+}
+
+void APlayerCharacter::MantleFinished()
+{
+	bIsMantling = false;
+}
+
+void APlayerCharacter::CancelMantle()
+{
+	// Cancel Mantle
+	bIsMantling = false;
+	bHitDetected = false;
+	bHold = false;
+
+	// Stop Timeline
+	MantleTimeline.Stop();
+
+	//Clear Timer
+	GetWorld()->GetTimerManager().ClearTimer(MantleCheckTimerHandle);
+
+	UE_LOG(LogTemp, Warning, TEXT("Mantle Cancelled: WorldStatic detected overhead"));
+}
+
+void APlayerCharacter::CrouchUpdate(float Alpha)
+{
+	float NewHalfHeight = FMath::Lerp(DefaultCapsuleHalfHeight, CrouchingHalfHeight, Alpha);
+	GetCapsuleComponent()->SetCapsuleHalfHeight(NewHalfHeight);
+
+	// Calculate height difference
+	float HeightDifference = DefaultCapsuleHalfHeight - NewHalfHeight;
+
+	// Adjust actor location to prevent sinking into the ground
+	float CameraZOffset = HeightDifference * CameraHeightMultiplier;
+
+	FVector NewCameraLocation = DefaultCameraBloomLocation;
+	NewCameraLocation.Z -= CameraZOffset;
+
+	CameraBloom->SetRelativeLocation(NewCameraLocation);
+}
+
+void APlayerCharacter::CrouchFinished()
+{
+}
+
+void APlayerCharacter::StartCrouch()
+{
+	bIsCrouching = true;
+	CrouchingTimeline.Play();
+	CharacterMovement->MaxWalkSpeed = CrouchMovementSpeed;
+	ACharacter::Crouch();
+}
+
+void APlayerCharacter::StopCrouch()
+{
+	if (CanStandUp())
+	{
+		bIsCrouching = false;
+		CrouchingTimeline.Reverse();
+		CharacterMovement->MaxWalkSpeed = DefaultMovementSpeed;
+		ACharacter::UnCrouch();
+	}
+}
+
+void APlayerCharacter::ToggleCrouch()
+{
+	if (bIsCrouching)
+	{
+		StopCrouch();
+	}
+	else
+	{
+		StartCrouch();
+	}
+}
+
+bool APlayerCharacter::CanStandUp()
+{
+	FVector CapsuleLocation = GetCapsuleComponent()->GetComponentLocation();
+
+	FVector Start = CapsuleLocation + FVector(0.0f, 0.0f, 30.0f);
+	FVector End = CapsuleLocation + FVector(0.0f, 0.0f, 90.0f);
+
+	FHitResult HitResult;
+	FCollisionQueryParams QueryParams;
+	QueryParams.AddIgnoredActor(this);
+
+	bool bHit = GetWorld()->SweepSingleByChannel(HitResult, Start, End, FQuat::Identity, TraceChannel, FCollisionShape::MakeSphere(TraceRadius), QueryParams);
+
+	// Debug visualization 
+	DrawDebugSphere(GetWorld(), Start, TraceRadius, 12, FColor::Green, false, 0.1f);
+	DrawDebugSphere(GetWorld(), End, TraceRadius, 12, FColor::Blue, false, 0.1f);
+	DrawDebugLine(GetWorld(), Start, End, bHit ? FColor::Red : FColor::Green, false, 0.1f);
+
+	// If hit something, cannot stand up
+	return !bHit;
+}
+
+void APlayerCharacter::LeanLeftUpdate(float Alpha)
+{
+	//Set Lean Value
+
+	LeanValue = -Alpha;
+
+	// Lerp Transform from Default to LeanLeft
+	FTransform NewTransform;
+	NewTransform.Blend(DefaultCameraTransform, LeanLeftTransform, Alpha);
+
+	// Camera? Set Relative Transform
+	Camera->SetRelativeTransform(NewTransform);
+}
+
+void APlayerCharacter::LeanLeftFinished()
+{
+}
+
+void APlayerCharacter::LeanRightUpdate(float Alpha)
+{
+	//Set Lean Value
+
+	LeanValue = -Alpha;
+
+	// Lerp Transform from Default to LeanRight
+	FTransform NewTransform;
+	NewTransform.Blend(DefaultCameraTransform, LeanRightTransform, Alpha);
+
+	// Camera? Set Relative Transform
+	Camera->SetRelativeTransform(NewTransform);
+}
+
+void APlayerCharacter::LeanRightFinished()
+{
+}
+
+void APlayerCharacter::StartLeanLeft()
+{
+	if (FMath::IsNearlyEqual(LeanValue, 0.0f))
+	{
+		LeanLeftTimeline.Play();
+	}
+}
+
+void APlayerCharacter::StopLeanLeft()
+{
+	LeanLeftTimeline.Reverse();
+}
+
+void APlayerCharacter::StartLeanRight()
+{
+	if (FMath::IsNearlyEqual(LeanValue, 0.0f))
+	{
+		LeanRightTimeline.Play();
+	}
+}
+
+void APlayerCharacter::StopLeanRight()
+{
+	LeanRightTimeline.Reverse();
+}
+
