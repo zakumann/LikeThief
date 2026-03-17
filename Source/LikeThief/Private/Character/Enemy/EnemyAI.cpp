@@ -60,11 +60,14 @@ void AEnemyAI::OnTargetPerceptionUpdated(AActor* Actor, FAIStimulus Stimulus)
 	// Get Sense Class for Stimulus
 	TSubclassOf<UAISense> SenseClass = UAIPerceptionSystem::GetSenseClassForStimulus(GetWorld(), Stimulus);
 
+	// === Get Class Display Name ===
+	FString SenseClassName = SenseClass ? SenseClass->GetName() : TEXT("None");
+
 	// Handle Sense
-	HandleSense(Actor, Stimulus);
+	HandleSense(SenseClassName, Actor, Stimulus);
 }
 
-void AEnemyAI::HandleSense(AActor* SensedActor, const FAIStimulus& Stimulus)
+void AEnemyAI::HandleSense(FString Selection, AActor* SensedActor, const FAIStimulus& Stimulus)
 {
 	if (!SensedActor)
 	{
@@ -78,13 +81,12 @@ void AEnemyAI::HandleSense(AActor* SensedActor, const FAIStimulus& Stimulus)
 		return;
 	}
 
-	// Get Sense Class
-	TSubclassOf<UAISense> SenseClass = UAIPerceptionSystem::GetSenseClassForStimulus(GetWorld(), Stimulus);
-
-	// Switch on String (Sense Class)
-	if (SenseClass == UAISense_Sight::StaticClass())
+	// === Switch on String (Selection) ===
+	if (Selection.Contains(TEXT("Sight")))
 	{
+		// ============================================
 		// === AISense_Sight ===
+		// ============================================
 
 		// Get successfully sensed flag
 		bool bSuccessfullySensed = Stimulus.WasSuccessfullySensed();
@@ -92,7 +94,7 @@ void AEnemyAI::HandleSense(AActor* SensedActor, const FAIStimulus& Stimulus)
 		// Get Player Character
 		APawn* PlayerPawn = UGameplayStatics::GetPlayerCharacter(GetWorld(), 0);
 
-		// Check if sensed actor is player and apply light detection
+		// === Light Detection Check (Only if player is sensed) ===
 		if (SensedActor == PlayerPawn && bSuccessfullySensed && PlayerPawn)
 		{
 			// Cast to PlayerCharacter
@@ -228,10 +230,10 @@ void AEnemyAI::HandleSense(AActor* SensedActor, const FAIStimulus& Stimulus)
 			}
 		}
 
-		// Set investigating state
+		// === Set Blackboard Value as Bool: IsInvestigating ===
 		BlackboardComp->SetValueAsBool(FName("IsInvestigating"), bSuccessfullySensed);
 
-		// Branch - Stimulus Successfully Sensed?
+		// === Branch: Stimulus Successfully Sensed? ===
 		if (bSuccessfullySensed)
 		{
 			// === True Branch - Player Detected ===
@@ -239,22 +241,22 @@ void AEnemyAI::HandleSense(AActor* SensedActor, const FAIStimulus& Stimulus)
 			// Branch - SensedActor == PlayerCharacter?
 			if (SensedActor == PlayerPawn)
 			{
-				// Set Value as Object - TargetLocationActor
+				// === Set Value as Object: TargetLocationActor ===
 				BlackboardComp->SetValueAsObject(FName("TargetLocationActor"), SensedActor);
 
-				// Get Controlled Pawn
-				APawn* ControlledPawn2 = GetPawn();
-				if (ControlledPawn2)
+				// === Get Controlled Pawn ===
+				APawn* ControlledPawn = GetPawn();
+				if (ControlledPawn)
 				{
-					// Cast To Character
-					ACharacter* AsCharacter = Cast<ACharacter>(ControlledPawn2);
+					// === Cast To Character ===
+					ACharacter* AsCharacter = Cast<ACharacter>(ControlledPawn);
 					if (AsCharacter)
 					{
-						// Get Character Movement
+						// === Get Character Movement ===
 						UCharacterMovementComponent* CharacterMovement = AsCharacter->GetCharacterMovement();
 						if (CharacterMovement)
 						{
-							// Set Max Walk Speed = 400
+							// === Set Max Walk Speed = 400 ===
 							CharacterMovement->MaxWalkSpeed = 400.0f;
 						}
 					}
@@ -265,15 +267,17 @@ void AEnemyAI::HandleSense(AActor* SensedActor, const FAIStimulus& Stimulus)
 		{
 			// === False Branch - Lost Sight ===
 
-			// Set Value as Vector - TargetLocationVector
+			// Get Stimulus Location
 			FVector StimulusLocation = Stimulus.StimulusLocation;
+
+			// === Set Value as Vector: TargetLocationVector ===
 			BlackboardComp->SetValueAsVector(FName("TargetLocationVector"), StimulusLocation);
 
-			// Set Value as Object - TargetLocationActor (Clear)
+			// === Set Value as Object: Clear TargetLocationActor ===
 			BlackboardComp->ClearValue(FName("TargetLocationActor"));
 		}
 	}
-	else if (SenseClass == UAISense_Hearing::StaticClass())
+	else if (Selection.Contains(TEXT("Hearing")))
 	{
 		// === AISense_Hearing ===
 

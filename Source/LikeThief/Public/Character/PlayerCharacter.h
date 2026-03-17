@@ -187,7 +187,7 @@ public:
 	UCurveFloat* MantleCurve = nullptr;
 
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Mantle")
-	float MantleCheckDelay = 0.001f;
+	float MantleCheckDelay = 0.005f;
 
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Mantle")
 	float MantleForwardDistance = 17.0f;

@@ -54,5 +54,5 @@ private:
 	UFUNCTION()
 	void OnTargetPerceptionUpdated(AActor* Actor, FAIStimulus Stimulus);
 
-	void HandleSense(AActor* SensedActor, const FAIStimulus& Stimulus);
+	void HandleSense(FString Selection, AActor* SensedActor, const FAIStimulus& Stimulus);
 };

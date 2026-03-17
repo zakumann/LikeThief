@@ -285,6 +285,10 @@ void APlayerCharacter::Landed(const FHitResult& Hit)
 	// Reset Mantle State
 	if (bIsMantling)
 	{
+		
+		// If Player character try mantling, be silence
+
+
 		return;
 	}
 
@@ -663,7 +667,7 @@ void APlayerCharacter::LeanRightUpdate(float Alpha)
 {
 	//Set Lean Value
 
-	LeanValue = -Alpha;
+	LeanValue = Alpha;
 
 	// Lerp Transform from Default to LeanRight
 	FTransform NewTransform;
