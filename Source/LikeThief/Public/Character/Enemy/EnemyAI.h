@@ -27,6 +27,7 @@ public:
 
 protected:
 	virtual void BeginPlay() override;
+	virtual void Tick(float DeltaTime) override;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "AI")
 	UBehaviorTree* BehaviorTree;
@@ -55,4 +56,6 @@ private:
 	void OnTargetPerceptionUpdated(AActor* Actor, FAIStimulus Stimulus);
 
 	void HandleSense(FString Selection, AActor* SensedActor, const FAIStimulus& Stimulus);
+
+	void CheckProximityDuringInvestigation();
 };

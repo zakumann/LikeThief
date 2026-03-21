@@ -43,6 +43,9 @@ AEnemyAI::AEnemyAI()
 	ProximityDetectionRange = 50.0f;
 	ProximityDetectionAngle = 90.0f;
 	LightThreshold = 0.5f;
+
+	// Enable Tick
+	PrimaryActorTick.bCanEverTick = true;
 }
 
 void AEnemyAI::BeginPlay()
@@ -54,6 +57,123 @@ void AEnemyAI::BeginPlay()
 		RunBehaviorTree(BehaviorTree);
 	}
 }
+
+void AEnemyAI::Tick(float DeltaTime)
+{
+	Super::Tick(DeltaTime);
+
+	CheckProximityDuringInvestigation();
+}
+
+
+void AEnemyAI::CheckProximityDuringInvestigation()
+{
+	UBlackboardComponent* BlackboardComp = GetBlackboardComponent();
+	if (!BlackboardComp)
+	{
+		return;
+	}
+
+	// Check if investigating
+	bool bIsInvestigating = BlackboardComp->GetValueAsBool(FName("IsInvestigating"));
+	if (!bIsInvestigating)
+	{
+		return;
+	}
+
+	// Check if already tracking player
+	AActor* TargetActor = Cast<AActor>(BlackboardComp->GetValueAsObject(FName("TargetLocationActor")));
+	if (TargetActor)
+	{
+		// Already tracking player - skip
+		return;
+	}
+
+	// Check if TargetLocationVector is set
+	FVector TargetLocationVector = BlackboardComp->GetValueAsVector(FName("TargetLocationVector"));
+	if (TargetLocationVector.IsNearlyZero())
+	{
+		// No investigation target - skip
+		return;
+	}
+
+	// Get Player
+	APawn* PlayerPawn = UGameplayStatics::GetPlayerCharacter(GetWorld(), 0);
+	if (!PlayerPawn)
+	{
+		return;
+	}
+
+	APlayerCharacter* Player = Cast<APlayerCharacter>(PlayerPawn);
+	if (!Player)
+	{
+		return;
+	}
+
+	// Get Controlled Pawn
+	APawn* ControlledPawn = GetPawn();
+	if (!ControlledPawn)
+	{
+		return;
+	}
+
+	// Calculate distance to player
+	float Distance = FVector::Dist(ControlledPawn->GetActorLocation(), Player->GetActorLocation());
+
+	// === Check Proximity ===
+	if (Distance <= ProximityDetectionRange)
+	{
+		// Player is close - check light value
+		float LightValue = Player->GetLightValue();
+
+		// Check if light is sufficient
+		if (LightValue >= LightThreshold)
+		{
+			// Light is sufficient - check angle
+			FVector EnemyForward = ControlledPawn->GetActorForwardVector();
+			EnemyForward.Z = 0.0f;
+			EnemyForward.Normalize();
+
+			FVector ToPlayer = Player->GetActorLocation() - ControlledPawn->GetActorLocation();
+			ToPlayer.Z = 0.0f;
+			ToPlayer.Normalize();
+
+			float DotProduct = FVector::DotProduct(EnemyForward, ToPlayer);
+			float AngleRadians = FMath::Acos(DotProduct);
+			float AngleDegrees = FMath::RadiansToDegrees(AngleRadians);
+
+			// Check if in front
+			if (AngleDegrees <= ProximityDetectionAngle)
+			{
+				// === SWITCH TO PLAYER TRACKING ===
+
+				// Set TargetLocationActor
+				BlackboardComp->SetValueAsObject(FName("TargetLocationActor"), PlayerPawn);
+
+				// Clear TargetLocationVector
+				BlackboardComp->ClearValue(FName("TargetLocationVector"));
+
+				// Set Max Walk Speed
+				ACharacter* AsCharacter = Cast<ACharacter>(ControlledPawn);
+				if (AsCharacter && AsCharacter->GetCharacterMovement())
+				{
+					AsCharacter->GetCharacterMovement()->MaxWalkSpeed = 400.0f;
+				}
+
+				// Debug
+				if (GEngine)
+				{
+					GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Red,
+						FString::Printf(TEXT("PROXIMITY SWITCH! Found Player at %.0fcm while investigating!"), Distance));
+				}
+
+				UE_LOG(LogTemp, Warning, TEXT("Proximity Detection: Switched from Investigation to Player Tracking! Distance: %.1f, Angle: %.1f"),
+					Distance, AngleDegrees);
+			}
+		}
+	}
+}
+
 
 void AEnemyAI::OnTargetPerceptionUpdated(AActor* Actor, FAIStimulus Stimulus)
 {
@@ -243,6 +363,8 @@ void AEnemyAI::HandleSense(FString Selection, AActor* SensedActor, const FAIStim
 			{
 				// === Set Value as Object: TargetLocationActor ===
 				BlackboardComp->SetValueAsObject(FName("TargetLocationActor"), SensedActor);
+
+				BlackboardComp->ClearValue(FName("TargetLocationVector"));
 
 				// === Get Controlled Pawn ===
 				APawn* ControlledPawn = GetPawn();
