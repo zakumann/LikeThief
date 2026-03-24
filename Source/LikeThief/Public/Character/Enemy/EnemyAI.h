@@ -15,7 +15,7 @@ class UAISenseConfig_Sight;
 class UAISenseConfig_Hearing;
 
 /**
- * 
+ *
  */
 UCLASS()
 class LIKETHIEF_API AEnemyAI : public AAIController

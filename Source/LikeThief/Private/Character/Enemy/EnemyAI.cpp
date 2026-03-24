@@ -187,223 +187,221 @@ void AEnemyAI::OnTargetPerceptionUpdated(AActor* Actor, FAIStimulus Stimulus)
 	HandleSense(SenseClassName, Actor, Stimulus);
 }
 
-void AEnemyAI::HandleSense(FString Selection, AActor* SensedActor, const FAIStimulus& Stimulus)
-{
-	if (!SensedActor)
+void AEnemyAI::HandleSense(FString Selection, AActor * SensedActor, const FAIStimulus & Stimulus)
 	{
-		return;
-	}
-
-	// Get Blackboard Component
-	UBlackboardComponent* BlackboardComp = GetBlackboardComponent();
-	if (!BlackboardComp)
-	{
-		return;
-	}
-
-	// === Switch on String (Selection) ===
-	if (Selection.Contains(TEXT("Sight")))
-	{
-		// ============================================
-		// === AISense_Sight ===
-		// ============================================
-
-		// Get successfully sensed flag
-		bool bSuccessfullySensed = Stimulus.WasSuccessfullySensed();
-
-		// Get Player Character
-		APawn* PlayerPawn = UGameplayStatics::GetPlayerCharacter(GetWorld(), 0);
-
-		// === Light Detection Check (Only if player is sensed) ===
-		if (SensedActor == PlayerPawn && bSuccessfullySensed && PlayerPawn)
+		if (!SensedActor)
 		{
-			// Cast to PlayerCharacter
-			APlayerCharacter* Player = Cast<APlayerCharacter>(PlayerPawn);
-			if (Player)
+			return;
+		}
+
+		// Get Blackboard Component
+		UBlackboardComponent* BlackboardComp = GetBlackboardComponent();
+		if (!BlackboardComp)
+		{
+			return;
+		}
+
+		// === Switch on String (Selection) ===
+		if (Selection.Contains(TEXT("Sight")))
+		{
+			// ============================================
+			// === AISense_Sight ===
+			// ============================================
+
+			// Get successfully sensed flag
+			bool bSuccessfullySensed = Stimulus.WasSuccessfullySensed();
+
+			// Get Player Character
+			APawn* PlayerPawn = UGameplayStatics::GetPlayerCharacter(GetWorld(), 0);
+
+			// === Light Detection Check (Only if player is sensed) ===
+			if (SensedActor == PlayerPawn && bSuccessfullySensed && PlayerPawn)
 			{
-				// Get controlled pawn
-				APawn* ControlledPawn = GetPawn();
-				if (ControlledPawn)
+				// Cast to PlayerCharacter
+				APlayerCharacter* Player = Cast<APlayerCharacter>(PlayerPawn);
+				if (Player)
 				{
-					// Calculate distance to player
-					float Distance = FVector::Dist(ControlledPawn->GetActorLocation(), Player->GetActorLocation());
-
-					// === Get Light Value from Player ===
-					float LightValue = Player->GetLightValue();
-
-					// Debug Light Value
-					if (GEngine)
+					// Get controlled pawn
+					APawn* ControlledPawn = GetPawn();
+					if (ControlledPawn)
 					{
-						GEngine->AddOnScreenDebugMessage(-1, 0.1f, FColor::White,
-							FString::Printf(TEXT("Player Light Value: %.2f"), LightValue));
-					}
+						// Calculate distance to player
+						float Distance = FVector::Dist(ControlledPawn->GetActorLocation(), Player->GetActorLocation());
 
-					// === Check 1: Light Threshold (최우선 체크) ===
-					if (LightValue < LightThreshold)
-					{
-						// 너무 어두움 - 무조건 감지 실패
-						bSuccessfullySensed = false;
+						// === Get Light Value from Player ===
+						float LightValue = Player->GetLightValue();
 
-						// Debug
+						// Debug Light Value
 						if (GEngine)
 						{
-							GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Green,
-								FString::Printf(TEXT("TOO DARK! Light: %.2f < %.2f (Passing through)"),
-									LightValue, LightThreshold));
+							GEngine->AddOnScreenDebugMessage(-1, 0.1f, FColor::White,
+								FString::Printf(TEXT("Player Light Value: %.2f"), LightValue));
 						}
-					}
-					else
-					{
-						// 충분히 밝음 - 추가 체크 진행
 
-						// === Check 2: Proximity Detection (전방 근접) ===
-						if (Distance <= ProximityDetectionRange)
+						// === Check 1: Light Threshold (최우선 체크) ===
+						if (LightValue < LightThreshold)
 						{
-							// 근접 거리 - 방향 체크
+							// 너무 어두움 - 무조건 감지 실패
+							bSuccessfullySensed = false;
 
-							// Enemy의 전방 방향 벡터
-							FVector EnemyForward = ControlledPawn->GetActorForwardVector();
-							EnemyForward.Z = 0.0f;
-							EnemyForward.Normalize();
-
-							// Enemy → Player 방향 벡터
-							FVector ToPlayer = Player->GetActorLocation() - ControlledPawn->GetActorLocation();
-							ToPlayer.Z = 0.0f;
-							ToPlayer.Normalize();
-
-							// 내적(Dot Product)으로 각도 계산
-							float DotProduct = FVector::DotProduct(EnemyForward, ToPlayer);
-							float AngleRadians = FMath::Acos(DotProduct);
-							float AngleDegrees = FMath::RadiansToDegrees(AngleRadians);
-
-							// 전방 각도 범위 내인지 체크
-							if (AngleDegrees <= ProximityDetectionAngle)
+							// Debug
+							if (GEngine)
 							{
-								// 전방 근접 - 발각!
-								bSuccessfullySensed = true;
-
-								// Debug
-								if (GEngine)
-								{
-									GEngine->AddOnScreenDebugMessage(-1, 2.0f, FColor::Red,
-										FString::Printf(TEXT("TOO CLOSE IN FRONT! Detected at %.0fcm, Angle: %.0f°"),
-											Distance, AngleDegrees));
-								}
-							}
-							else
-							{
-								// 뒤나 옆 - 은신 규칙 적용
-								float StealthMultiplier = Player->GetStealthDetectionMultiplier();
-								float BaseSightRadius = SightConfig ? SightConfig->SightRadius : 1500.0f;
-								float ModifiedSightRadius = BaseSightRadius * StealthMultiplier;
-
-								if (Distance > ModifiedSightRadius)
-								{
-									bSuccessfullySensed = false;
-								}
-
-								// Debug
-								if (GEngine)
-								{
-									GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Cyan,
-										FString::Printf(TEXT("Close but behind/side: %.0fcm, Angle: %.0f° (Safe)"),
-											Distance, AngleDegrees));
-								}
+								GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Green,
+									FString::Printf(TEXT("TOO DARK! Light: %.2f < %.2f (Passing through)"),
+										LightValue, LightThreshold));
 							}
 						}
 						else
 						{
-							// === Check 3: Normal Distance - Stealth Detection ===
-							float StealthMultiplier = Player->GetStealthDetectionMultiplier();
-							float BaseSightRadius = SightConfig ? SightConfig->SightRadius : 1500.0f;
-							float ModifiedSightRadius = BaseSightRadius * StealthMultiplier;
+							// 충분히 밝음 - 추가 체크 진행
 
-							// 거리 체크
-							if (Distance > ModifiedSightRadius)
+							// === Check 2: Proximity Detection (전방 근접) ===
+							if (Distance <= ProximityDetectionRange)
 							{
-								bSuccessfullySensed = false;
+								// 근접 거리 - 방향 체크
 
-								// Debug
-								if (GEngine)
+								// Enemy의 전방 방향 벡터
+								FVector EnemyForward = ControlledPawn->GetActorForwardVector();
+								EnemyForward.Z = 0.0f;
+								EnemyForward.Normalize();
+
+								// Enemy → Player 방향 벡터
+								FVector ToPlayer = Player->GetActorLocation() - ControlledPawn->GetActorLocation();
+								ToPlayer.Z = 0.0f;
+								ToPlayer.Normalize();
+
+								// 내적(Dot Product)으로 각도 계산
+								float DotProduct = FVector::DotProduct(EnemyForward, ToPlayer);
+								float AngleRadians = FMath::Acos(DotProduct);
+								float AngleDegrees = FMath::RadiansToDegrees(AngleRadians);
+
+								// 전방 각도 범위 내인지 체크
+								if (AngleDegrees <= ProximityDetectionAngle)
 								{
-									GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Cyan,
-										FString::Printf(TEXT("Player too far: %.0f > %.0f (Stealth: %.1f%%)"),
-											Distance, ModifiedSightRadius, StealthMultiplier * 100.0f));
+									// 전방 근접 - 발각!
+									bSuccessfullySensed = true;
+
+									// Debug
+									if (GEngine)
+									{
+										GEngine->AddOnScreenDebugMessage(-1, 2.0f, FColor::Red,
+											FString::Printf(TEXT("TOO CLOSE IN FRONT! Detected at %.0fcm, Angle: %.0f°"),
+												Distance, AngleDegrees));
+									}
+								}
+								else
+								{
+									// 뒤나 옆 - 은신 규칙 적용
+									float StealthMultiplier = Player->GetStealthDetectionMultiplier();
+									float BaseSightRadius = SightConfig ? SightConfig->SightRadius : 1500.0f;
+									float ModifiedSightRadius = BaseSightRadius * StealthMultiplier;
+
+									if (Distance > ModifiedSightRadius)
+									{
+										bSuccessfullySensed = false;
+									}
+
+									// Debug
+									if (GEngine)
+									{
+										GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Cyan,
+											FString::Printf(TEXT("Close but behind/side: %.0fcm, Angle: %.0f° (Safe)"),
+												Distance, AngleDegrees));
+									}
 								}
 							}
 							else
 							{
-								// 발각!
-								bSuccessfullySensed = true;
+								// === Check 3: Normal Distance - Stealth Detection ===
+								float StealthMultiplier = Player->GetStealthDetectionMultiplier();
+								float BaseSightRadius = SightConfig ? SightConfig->SightRadius : 1500.0f;
+								float ModifiedSightRadius = BaseSightRadius * StealthMultiplier;
 
-								// Debug
-								if (GEngine)
+								// 거리 체크
+								if (Distance > ModifiedSightRadius)
 								{
-									GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Orange,
-										FString::Printf(TEXT("Player DETECTED! Distance: %.0f, Light: %.2f"),
-											Distance, LightValue));
+									bSuccessfullySensed = false;
+
+									// Debug
+									if (GEngine)
+									{
+										GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Cyan,
+											FString::Printf(TEXT("Player too far: %.0f > %.0f (Stealth: %.1f%%)"),
+												Distance, ModifiedSightRadius, StealthMultiplier * 100.0f));
+									}
+								}
+								else
+								{
+									// 발각!
+									bSuccessfullySensed = true;
+
+									// Debug
+									if (GEngine)
+									{
+										GEngine->AddOnScreenDebugMessage(-1, 1.0f, FColor::Orange,
+											FString::Printf(TEXT("Player DETECTED! Distance: %.0f, Light: %.2f"),
+												Distance, LightValue));
+									}
 								}
 							}
 						}
 					}
 				}
 			}
-		}
 
-		// === Set Blackboard Value as Bool: IsInvestigating ===
-		BlackboardComp->SetValueAsBool(FName("IsInvestigating"), bSuccessfullySensed);
+			// === Set Blackboard Value as Bool: IsInvestigating ===
+			BlackboardComp->SetValueAsBool(FName("IsInvestigating"), bSuccessfullySensed);
 
-		// === Branch: Stimulus Successfully Sensed? ===
-		if (bSuccessfullySensed)
-		{
-			// === True Branch - Player Detected ===
-
-			// Branch - SensedActor == PlayerCharacter?
-			if (SensedActor == PlayerPawn)
+			// === Branch: Stimulus Successfully Sensed? ===
+			if (bSuccessfullySensed)
 			{
-				// === Set Value as Object: TargetLocationActor ===
-				BlackboardComp->SetValueAsObject(FName("TargetLocationActor"), SensedActor);
+				// === True Branch - Player Detected ===
 
-				BlackboardComp->ClearValue(FName("TargetLocationVector"));
-
-				// === Get Controlled Pawn ===
-				APawn* ControlledPawn = GetPawn();
-				if (ControlledPawn)
+				// Branch - SensedActor == PlayerCharacter?
+				if (SensedActor == PlayerPawn)
 				{
-					// === Cast To Character ===
-					ACharacter* AsCharacter = Cast<ACharacter>(ControlledPawn);
-					if (AsCharacter)
+					// === Set Value as Object: TargetLocationActor ===
+					BlackboardComp->SetValueAsObject(FName("TargetLocationActor"), SensedActor);
+
+					// === Get Controlled Pawn ===
+					APawn* ControlledPawn = GetPawn();
+					if (ControlledPawn)
 					{
-						// === Get Character Movement ===
-						UCharacterMovementComponent* CharacterMovement = AsCharacter->GetCharacterMovement();
-						if (CharacterMovement)
+						// === Cast To Character ===
+						ACharacter* AsCharacter = Cast<ACharacter>(ControlledPawn);
+						if (AsCharacter)
 						{
-							// === Set Max Walk Speed = 400 ===
-							CharacterMovement->MaxWalkSpeed = 400.0f;
+							// === Get Character Movement ===
+							UCharacterMovementComponent* CharacterMovement = AsCharacter->GetCharacterMovement();
+							if (CharacterMovement)
+							{
+								// === Set Max Walk Speed = 400 ===
+								CharacterMovement->MaxWalkSpeed = 400.0f;
+							}
 						}
 					}
 				}
 			}
+			else
+			{
+				// === False Branch - Lost Sight ===
+
+				// Get Stimulus Location
+				FVector StimulusLocation = Stimulus.StimulusLocation;
+
+				// === Set Value as Vector: TargetLocationVector ===
+				BlackboardComp->SetValueAsVector(FName("TargetLocationVector"), StimulusLocation);
+
+				// === Set Value as Object: Clear TargetLocationActor ===
+				BlackboardComp->ClearValue(FName("TargetLocationActor"));
+			}
 		}
-		else
-		{
-			// === False Branch - Lost Sight ===
-
-			// Get Stimulus Location
-			FVector StimulusLocation = Stimulus.StimulusLocation;
-
-			// === Set Value as Vector: TargetLocationVector ===
-			BlackboardComp->SetValueAsVector(FName("TargetLocationVector"), StimulusLocation);
-
-			// === Set Value as Object: Clear TargetLocationActor ===
-			BlackboardComp->ClearValue(FName("TargetLocationActor"));
-		}
-	}
 	else if (Selection.Contains(TEXT("Hearing")))
 	{
 		// === AISense_Hearing ===
 
-		// Get current investigation state
+	// Get current investigation state
 		bool bIsCurrentlyInvestigating = BlackboardComp->GetValueAsBool(FName("IsInvestigating"));
 
 		// Set Value as Bool - IsInvestigating

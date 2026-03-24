@@ -201,6 +201,10 @@ void APlayerCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCom
 
 		EnhancedInput->BindAction(LeanRightAction, ETriggerEvent::Started, this, &APlayerCharacter::StartLeanRight);
 		EnhancedInput->BindAction(LeanRightAction, ETriggerEvent::Completed, this, &APlayerCharacter::StopLeanRight);
+
+		// Sprint
+		EnhancedInput->BindAction(SprintAction, ETriggerEvent::Started, this, &APlayerCharacter::StartSprint);
+		EnhancedInput->BindAction(SprintAction, ETriggerEvent::Completed, this, &APlayerCharacter::StopSprint);
 	}
 }
 
@@ -280,16 +284,18 @@ void APlayerCharacter::Landed(const FHitResult& Hit)
 {
 	Super::Landed(Hit);
 
-	bIsMantling = false;
-
 	// Reset Mantle State
 	if (bIsMantling)
 	{
 		
 		// If Player character try mantling, be silence
-
-
+		bIsMantling = false;
 		return;
+	}
+
+	if (bIsSprinting)
+	{
+		StopSprint();
 	}
 
 	if (LandingSoundCue)
@@ -329,6 +335,10 @@ void APlayerCharacter::HandleFootsteps(float DeltaTime)
 
 	// Character is moving and on the ground, increment the footstep timer
 	FootstepTimer += DeltaTime;
+
+	// Interval and Loudness through Sprint
+	float CurrentFootstepInterval = bIsSprinting ? SprintFootstepInterval : FootstepInterval;
+	float CurrentFootstepLoudness = bIsSprinting ? SprintFootstepLoudness : FootstepLoudness;
 
 	// If the footstep timer exceeds the interval, play footstep sound and report noise event to AI Perception system
 	if (FootstepTimer >= FootstepInterval)
@@ -394,6 +404,35 @@ void APlayerCharacter::StopJump()
 {
 	bHold = false;
 	ACharacter::StopJumping();
+}
+
+void APlayerCharacter::StartSprint()
+{
+	if (bIsCrouching)
+	{
+		return;
+	}
+
+	if (bIsMantling)
+	{
+		return;
+	}
+	bIsSprinting = true;
+	CharacterMovement->MaxWalkSpeed = SprintSpeed;
+}
+
+void APlayerCharacter::StopSprint()
+{
+	bIsSprinting = false;
+	if (bIsCrouching)
+	{
+		CharacterMovement->MaxWalkSpeed = CrouchMovementSpeed;
+
+	}
+	else
+	{
+		CharacterMovement->MaxWalkSpeed = DefaultMovementSpeed;
+	}
 }
 
 void APlayerCharacter::CheckMantleCondition()
@@ -594,9 +633,14 @@ void APlayerCharacter::CrouchFinished()
 
 void APlayerCharacter::StartCrouch()
 {
+	if (bIsSprinting)
+	{
+		StopSprint();
+	}
 	bIsCrouching = true;
 	CrouchingTimeline.Play();
 	CharacterMovement->MaxWalkSpeed = CrouchMovementSpeed;
+	FootstepLoudness = 0.0f;
 	ACharacter::Crouch();
 }
 

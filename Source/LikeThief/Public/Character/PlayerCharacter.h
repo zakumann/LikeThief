@@ -64,6 +64,10 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = Input)
 	class UInputAction* LeanRightAction;
 
+	//Sprint
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = Input)
+	class UInputAction* SprintAction;
+
 	//--- walkspeed
 	class UCharacterMovementComponent* CharacterMovement = GetCharacterMovement();
 public:
@@ -80,6 +84,9 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Audio")
 	float FootstepInterval = 0.4f;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Audio")
+	float SprintFootstepInterval = 0.25f;
+
 	// AI can hear footstep within this range
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Audio")
 	float NoiseRange = 1000.0f;
@@ -87,6 +94,9 @@ protected:
 	// Loudness of the footstep
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Audio")
 	float FootstepLoudness = 0.2f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Audio")
+	float SprintFootstepLoudness = 1.5f;
 
 	// --- Landing System---
 	virtual void Landed(const FHitResult& Hit) override;
@@ -141,11 +151,15 @@ public:
 	float CurrentLightValue = 1.0f;
 
 	// Movement speed
+
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Move")
 	float DefaultMovementSpeed = 500.0f;
 
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Move")
 	float CrouchMovementSpeed = 300.0f;
+
+	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Move")
+	float SprintSpeed = 800.0f;
 
 	// ---Crouch---
 	UPROPERTY(BlueprintReadWrite, EditAnywhere, Category = "Crouch")
@@ -210,12 +224,16 @@ protected:
 	void Jump();
 	void StopJump();
 
+	void StartSprint();
+	void StopSprint();
+
 
 	// --- Crouch---
 public:
 	FTimeline CrouchingTimeline;
 
 	bool bIsCrouching = false;
+	bool bIsSprinting = false;
 
 	UFUNCTION()
 	void CrouchUpdate(float Alpha);
