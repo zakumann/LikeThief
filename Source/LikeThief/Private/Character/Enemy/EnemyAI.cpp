@@ -40,7 +40,7 @@ AEnemyAI::AEnemyAI()
 	AIPerception->OnTargetPerceptionUpdated.AddDynamic(this, &AEnemyAI::OnTargetPerceptionUpdated);
 
 	// Detection Settings
-	ProximityDetectionRange = 50.0f;
+	ProximityDetectionRange = 100.0f;
 	ProximityDetectionAngle = 90.0f;
 	LightThreshold = 0.5f;
 
@@ -123,52 +123,62 @@ void AEnemyAI::CheckProximityDuringInvestigation()
 	// === Check Proximity ===
 	if (Distance <= ProximityDetectionRange)
 	{
-		// Player is close - check light value
-		float LightValue = Player->GetLightValue();
+		// Player is very close - check angle only (ignore light!)
+		
+		// Enemy의 전방 방향 벡터
+		FVector EnemyForward = ControlledPawn->GetActorForwardVector();
+		EnemyForward.Z = 0.0f;
+		EnemyForward.Normalize();
 
-		// Check if light is sufficient
-		if (LightValue >= LightThreshold)
+		// Enemy → Player 방향 벡터
+		FVector ToPlayer = Player->GetActorLocation() - ControlledPawn->GetActorLocation();
+		ToPlayer.Z = 0.0f;
+		ToPlayer.Normalize();
+
+		// 내적으로 각도 계산
+		float DotProduct = FVector::DotProduct(EnemyForward, ToPlayer);
+		float AngleRadians = FMath::Acos(DotProduct);
+		float AngleDegrees = FMath::RadiansToDegrees(AngleRadians);
+
+		// Check if in front (각도만 체크, 빛은 무시!)
+		if (AngleDegrees <= ProximityDetectionAngle)
 		{
-			// Light is sufficient - check angle
-			FVector EnemyForward = ControlledPawn->GetActorForwardVector();
-			EnemyForward.Z = 0.0f;
-			EnemyForward.Normalize();
+			// === SWITCH TO PLAYER TRACKING ===
 
-			FVector ToPlayer = Player->GetActorLocation() - ControlledPawn->GetActorLocation();
-			ToPlayer.Z = 0.0f;
-			ToPlayer.Normalize();
+			// Set TargetLocationActor
+			BlackboardComp->SetValueAsObject(FName("TargetLocationActor"), PlayerPawn);
 
-			float DotProduct = FVector::DotProduct(EnemyForward, ToPlayer);
-			float AngleRadians = FMath::Acos(DotProduct);
-			float AngleDegrees = FMath::RadiansToDegrees(AngleRadians);
+			// Clear TargetLocationVector
+			BlackboardComp->ClearValue(FName("TargetLocationVector"));
 
-			// Check if in front
-			if (AngleDegrees <= ProximityDetectionAngle)
+			// Set Max Walk Speed
+			ACharacter* AsCharacter = Cast<ACharacter>(ControlledPawn);
+			if (AsCharacter && AsCharacter->GetCharacterMovement())
 			{
-				// === SWITCH TO PLAYER TRACKING ===
+				AsCharacter->GetCharacterMovement()->MaxWalkSpeed = 400.0f;
+			}
 
-				// Set TargetLocationActor
-				BlackboardComp->SetValueAsObject(FName("TargetLocationActor"), PlayerPawn);
+			// Get Light Value for debug
+			float LightValue = Player->GetLightValue();
 
-				// Clear TargetLocationVector
-				BlackboardComp->ClearValue(FName("TargetLocationVector"));
+			// Debug
+			if (GEngine)
+			{
+				GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Red,
+					FString::Printf(TEXT("PROXIMITY SWITCH! Found Player at %.0fcm (Light: %.2f - IGNORED!)"),
+						Distance, LightValue));
+			}
 
-				// Set Max Walk Speed
-				ACharacter* AsCharacter = Cast<ACharacter>(ControlledPawn);
-				if (AsCharacter && AsCharacter->GetCharacterMovement())
-				{
-					AsCharacter->GetCharacterMovement()->MaxWalkSpeed = 400.0f;
-				}
-
-				// Debug
-				if (GEngine)
-				{
-					GEngine->AddOnScreenDebugMessage(-1, 3.0f, FColor::Red,
-						FString::Printf(TEXT("PROXIMITY SWITCH! Found Player at %.0fcm while investigating!"), Distance));
-				}
-
-				UE_LOG(LogTemp, Warning, TEXT("Proximity Detection: Switched from Investigation to Player Tracking! Distance: %.1f, Angle: %.1f"),
-					Distance, AngleDegrees);
+			UE_LOG(LogTemp, Warning, TEXT("Proximity Detection: Switched from Investigation to Player Tracking! Distance: %.1f, Angle: %.1f, Light: %.2f (IGNORED)"),
+				Distance, AngleDegrees, LightValue);
+		}
+		else
+		{
+			// 뒤나 옆에 있음 - Debug
+			if (GEngine)
+			{
+				GEngine->AddOnScreenDebugMessage(-1, 0.5f, FColor::Cyan,
+					FString::Printf(TEXT("Player close but behind/side (Angle: %.0f°)"), AngleDegrees));
 			}
 		}
 	}
