@@ -68,6 +68,10 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = Input)
 	class UInputAction* SprintAction;
 
+	// Interaction Input Actions
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Input")
+	class UInputAction* InteractAction;
+
 	//--- walkspeed
 	class UCharacterMovementComponent* CharacterMovement = GetCharacterMovement();
 public:
@@ -292,4 +296,19 @@ public:
 	void MantleUp();
 	bool CheckMantleOverhead();
 	void CancelMantle();
+
+	// --- Interaction ---
+
+	void Interact();
+
+	// Linetrace for Interaction
+	UFUNCTION(BlueprintCallable, Category = "Interaction")
+	void LineTrace(AActor*& HitActor, bool& bValid);
+
+	UPROPERTY(EditAnywhere, Category = "Interaction")
+	float InteractDistance = 200.0f; // 지정하신 200유닛 거리
+
+	// Project Settings에서 추가한 커스텀 채널 (보통 ECC_GameTraceChannel1 등으로 매핑됨)
+	UPROPERTY(EditAnywhere, Category = "Interaction")
+	TEnumAsByte<ECollisionChannel> InteractTraceChannel = ECC_GameTraceChannel1;
 };

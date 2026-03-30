@@ -21,6 +21,7 @@
 #include "Sound/SoundCue.h"
 #include "Character/LightDetector.h"
 #include "Components/ChildActorComponent.h"
+#include "Character/InteractionInterface.h"
 
 // Sets default values
 APlayerCharacter::APlayerCharacter()
@@ -205,6 +206,9 @@ void APlayerCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCom
 		// Sprint
 		EnhancedInput->BindAction(SprintAction, ETriggerEvent::Started, this, &APlayerCharacter::StartSprint);
 		EnhancedInput->BindAction(SprintAction, ETriggerEvent::Completed, this, &APlayerCharacter::StopSprint);
+
+		// Interaction
+		EnhancedInput->BindAction(InteractAction, ETriggerEvent::Started, this, &APlayerCharacter::Interact);
 	}
 }
 
@@ -608,6 +612,82 @@ void APlayerCharacter::CancelMantle()
 	GetWorld()->GetTimerManager().ClearTimer(MantleCheckTimerHandle);
 
 	UE_LOG(LogTemp, Warning, TEXT("Mantle Cancelled: WorldStatic detected overhead"));
+}
+
+void APlayerCharacter::Interact()
+{
+	AActor* HitActor = nullptr;
+	bool bValid = false;
+
+	// LineTrace
+	LineTrace(HitActor, bValid);
+
+	// Branch: Valid?
+	if (bValid && HitActor)
+	{
+		// Branch: Does Object Implement Interface?
+		if (HitActor->GetClass()->ImplementsInterface(UInteractionInterface::StaticClass()))
+		{
+			// Call Interact
+			IInteractionInterface::Execute_Interact(HitActor, this);
+
+			// Debug
+			if (GEngine)
+			{
+				GEngine->AddOnScreenDebugMessage(-1, 2.0f, FColor::Green,
+					FString::Printf(TEXT("Interacted with: %s"), *HitActor->GetName()));
+			}
+		}
+	}
+}
+
+void APlayerCharacter::LineTrace(AActor*& HitActor, bool& bValid)
+{
+	if (!Camera)
+	{
+		HitActor = nullptr;
+		bValid = false;
+		return;
+	}
+
+	// Get Camera Location and Forward Vector
+	FVector Start = Camera->GetComponentLocation();
+	FVector ForwardVector = Camera->GetForwardVector();
+	FVector End = Start + (ForwardVector * InteractDistance);
+
+	// LineTrace by Channel
+	FHitResult HitResult;
+	FCollisionQueryParams QueryParams;
+	QueryParams.AddIgnoredActor(this);
+
+	bool bHit = GetWorld()->LineTraceSingleByChannel(
+		HitResult,
+		Start,
+		End,
+		InteractTraceChannel,
+		QueryParams
+	);
+
+	// Debug Draw
+#if WITH_EDITOR
+	DrawDebugLine(GetWorld(), Start, End, bHit ? FColor::Green : FColor::Red, false, 2.0f, 0, 2.0f);
+	if (bHit)
+	{
+		DrawDebugPoint(GetWorld(), HitResult.Location, 1.0f, FColor::Yellow, false, 1.0f);
+	}
+#endif
+
+	// Set Output Parameters
+	if (bHit)
+	{
+		HitActor = HitResult.GetActor();
+		bValid = true;
+	}
+	else
+	{
+		HitActor = nullptr;
+		bValid = false;
+	}
 }
 
 void APlayerCharacter::CrouchUpdate(float Alpha)
